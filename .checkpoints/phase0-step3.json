@@ -1,0 +1,14 @@
+{
+  "phase": 0,
+  "step": "0.3 - EUR-Lex APIs verified",
+  "timestamp": "2026-05-20T03:40:00Z",
+  "status": "passed",
+  "evidence": {
+    "sparql_query": true,
+    "html_fetch_bytes": 368245,
+    "celex_tested": "32019R0947",
+    "internal_parse_elements": 982,
+    "text_elements": 918,
+    "polars_schema_bug": "parse_html() requires fixed-schema workaround - use internal parser directly"
+  }
+}
