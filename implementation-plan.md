@@ -218,20 +218,49 @@ SPARQL OK — got 3 documents
   ...
 ```
 
-### Step 0.9 — Verify EUR-Lex HTML fetch via SPARQL fallback
+### Step 0.9 — Verify EUR-Lex HTML fetch + parse
+
+⚠️ **Known issue:** `eurlxp.parse_html()` has a Polars schema bug — the `modifier` field is conditionally included, causing schema mismatch. Use the internal parser directly with a fixed schema instead.
 
 ```bash
 source ~/Desktop/EUProjects/.venv/bin/activate
 python3 -c "
 from eurlxp import get_html_by_celex_id
-from eurlxp.parser import parse_html
+from eurlxp.parser import _parse_html_with_beautifulsoup as internal_parse
+import polars as pl
 
 html = get_html_by_celex_id('32019R0947', language='en')
 print(f'HTML fetched: {len(html)} bytes')
 
-df = parse_html(html)
-print(f'Parsed: {len(df)} elements')
-print(df.head(5))
+results = internal_parse(html)
+print(f'Parsed: {len(results)} elements')
+
+# Build records with fixed schema (workaround for eurlxp Polars bug)
+records = []
+for r in results:
+    records.append({
+        'text': r.text,
+        'type': r.item_type,
+        'ref': str(r.ref),
+        'modifier': r.modifier,
+        'document': r.context.document,
+        'article': r.context.article,
+        'article_subtitle': r.context.article_subtitle,
+        'paragraph': r.context.paragraph,
+        'group': r.context.group,
+        'section': r.context.section,
+    })
+
+df = pl.DataFrame(records, schema={
+    'text': pl.Utf8, 'type': pl.Utf8, 'ref': pl.Utf8,
+    'modifier': pl.Utf8, 'document': pl.Utf8, 'article': pl.Utf8,
+    'article_subtitle': pl.Utf8, 'paragraph': pl.Utf8,
+    'group': pl.Utf8, 'section': pl.Utf8,
+})
+print(f'DataFrame: {len(df)} rows')
+texts = df.filter(pl.col('type') == 'text')
+print(f'Text elements: {len(texts)}')
+print(texts.head(5))
 "
 ```
 
@@ -506,16 +535,48 @@ def fetch_document_xhtml(doc):
 # ── Step 3: Parse HTML → Structured Text ───────────────────────────────────
 
 def parse_html_to_chunks(html, celex_id, title):
-    """Parse EUR-Lex HTML into text chunks using eurlxp parser."""
-    from eurlxp.parser import parse_html
+    """Parse EUR-Lex HTML into text chunks using eurlxp internal parser.
+
+    ⚠️ Uses _parse_html_with_beautifulsoup directly instead of parse_html()
+    because eurlxp's parse_html() has a Polars schema bug (conditional modifier
+    field causes schema mismatch). This workaround uses a fixed schema.
+    """
+    from eurlxp.parser import _parse_html_with_beautifulsoup as internal_parse
+    import polars as pl
 
     try:
-        df = parse_html(html)
+        results = internal_parse(html)
     except Exception as e:
         logger.warning(f"  Parse error for {celex_id}: {e}")
         return []
 
-    if df is None or len(df) == 0:
+    if not results:
+        return []
+
+    # Convert to DataFrame with fixed schema (bypasses eurlxp bug)
+    records = []
+    for r in results:
+        records.append({
+            'text': r.text,
+            'type': r.item_type,
+            'ref': str(r.ref),
+            'modifier': r.modifier,
+            'document': r.context.document,
+            'article': r.context.article,
+            'article_subtitle': r.context.article_subtitle,
+            'paragraph': r.context.paragraph,
+            'group': r.context.group,
+            'section': r.context.section,
+        })
+
+    df = pl.DataFrame(records, schema={
+        'text': pl.Utf8, 'type': pl.Utf8, 'ref': pl.Utf8,
+        'modifier': pl.Utf8, 'document': pl.Utf8, 'article': pl.Utf8,
+        'article_subtitle': pl.Utf8, 'paragraph': pl.Utf8,
+        'group': pl.Utf8, 'section': pl.Utf8,
+    })
+
+    if len(df) == 0:
         return []
 
     chunks = []
@@ -2459,14 +2520,40 @@ def fetch_document_html(celex):
 
 
 def parse_to_chunks(html, celex, title):
-    """Parse HTML into text chunks."""
+    """Parse HTML into text chunks.
+
+    ⚠️ Uses _parse_html_with_beautifulsoup directly (eurlxp parse_html has
+    a Polars schema bug with conditional modifier field).
+    """
     try:
-        from eurlxp.parser import parse_html
-        df = parse_html(html)
+        from eurlxp.parser import _parse_html_with_beautifulsoup as internal_parse
+        import polars as pl
+        results = internal_parse(html)
     except Exception:
         return []
 
-    if df is None or len(df) == 0:
+    if not results:
+        return []
+
+    # Fixed-schema conversion (bypasses eurlxp parse_html bug)
+    records = []
+    for r in results:
+        records.append({
+            'text': r.text, 'type': r.item_type, 'ref': str(r.ref),
+            'modifier': r.modifier, 'document': r.context.document,
+            'article': r.context.article, 'article_subtitle': r.context.article_subtitle,
+            'paragraph': r.context.paragraph, 'group': r.context.group,
+            'section': r.context.section,
+        })
+
+    df = pl.DataFrame(records, schema={
+        'text': pl.Utf8, 'type': pl.Utf8, 'ref': pl.Utf8,
+        'modifier': pl.Utf8, 'document': pl.Utf8, 'article': pl.Utf8,
+        'article_subtitle': pl.Utf8, 'paragraph': pl.Utf8,
+        'group': pl.Utf8, 'section': pl.Utf8,
+    })
+
+    if len(df) == 0:
         return []
 
     chunks = []
