@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: eurlex-chat-api
+    runtime: python
+    repo: https://github.com/nedaktov-ops/eur-lex-ai-chat
+    branch: main
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && ./startup.sh
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: HF_USERNAME
+        value: NedAktovOps
+      - key: HF_DATASET
+        value: eurlex-chat-data
