@@ -1,0 +1,59 @@
+---
+import Base from "../layouts/Base.astro";
+
+const faqQuestions = [
+  {
+    question: "What is EUR-Lex?",
+    answer:
+      "EUR-Lex is the official online portal for European Union law. It provides access to the Official Journal of the EU, treaties, legislation, case law, and other legal documents. EUR-Lex AI Chat uses data from EUR-Lex via the Cellar API.",
+  },
+  {
+    question: "What is a CELEX number?",
+    answer:
+      "A CELEX number is a unique identifier assigned to every document in EUR-Lex. It follows a specific format: for example, 32019R0947 breaks down as 3 (sector: legislation), 2019 (year), R (regulation), 0947 (document number). CELEX numbers are used to cite and locate EU legal documents precisely.",
+  },
+  {
+    question: "How accurate is the AI?",
+    answer:
+      "The AI searches over actual EUR-Lex documents and cites its sources with CELEX numbers. However, you should always verify important legal information by checking the official documents on EUR-Lex. The AI can make mistakes and should not be used as a substitute for professional legal advice.",
+  },
+  {
+    question: "Is this service free?",
+    answer:
+      "Yes, completely free. You can make up to 20 queries per day per IP address. There are no accounts, no subscriptions, and no hidden costs. This is an open-source project built with free cloud services.",
+  },
+  {
+    question: "What documents are included?",
+    answer:
+      "The index includes EU regulations, directives, and implementing acts from EUR-Lex, published since 2000, available in English. This covers over 25 years of EU legislation including major laws like the GDPR, AI Act, and Digital Markets Act.",
+  },
+  {
+    question: "How often is the data updated?",
+    answer:
+      "The index is refreshed daily via automated workflows. New regulations and amendments are picked up within 24 hours of publication in the Official Journal.",
+  },
+  {
+    question: "What is the Cellar API?",
+    answer:
+      "The Cellar API is the official Semantic Web interface for EUR-Lex. It provides structured access to EU legal documents via SPARQL queries and REST endpoints. This project uses Cellar APIs exclusively, not web scraping.",
+  },
+];
+---
+
+<Base
+  title="FAQ — Frequently Asked Questions"
+  description="Common questions about EUR-Lex AI Chat: how it works, what data it uses, how accurate it is, and more."
+  canonical="https://eurlex-chat.vercel.app/faq"
+>
+  <div class="max-w-3xl mx-auto px-4 py-12">
+    <h1 class="text-3xl font-bold mb-8">Frequently Asked Questions</h1>
+    <div class="space-y-6">
+      {faqQuestions.map((item) => (
+        <div class="bg-white border border-gray-200 rounded-lg p-6">
+          <h2 class="text-lg font-semibold mb-2">{item.question}</h2>
+          <p class="text-gray-600 text-sm leading-relaxed">{item.answer}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</Base>
