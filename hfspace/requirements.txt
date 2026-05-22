@@ -1,0 +1,5 @@
+fastapi==0.136.1
+uvicorn==0.47.0
+numpy==2.4.6
+httpx==0.28.1
+huggingface_hub==1.15.0
