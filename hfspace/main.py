@@ -72,9 +72,9 @@ async def health():
     stats = get_stats()
     return {
         "status": "ok",
-        "index_loaded": stats["vectors"] is not None,
-        "vector_count": stats["vectors"][0] if stats["vectors"] else 0,
-        "chunk_count": stats["chunks"],
+        "index_loaded": stats["vectors"] > 0,
+        "ntotal": stats["vectors"],
+        "size": stats["size"],
         "last_updated": stats["last_updated"],
         "loaded_at": stats["loaded_at"],
     }

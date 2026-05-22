@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir sentence-transformers==3.4.1
+RUN pip install --no-cache-dir faiss-cpu==1.13.2
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
