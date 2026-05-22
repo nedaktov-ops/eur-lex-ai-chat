@@ -1,3 +1,5 @@
+# Install CPU-only PyTorch first (smaller, Render-compatible)
+# See startup.sh for the install order
 fastapi==0.136.1
 uvicorn==0.47.0
 numpy==2.4.6

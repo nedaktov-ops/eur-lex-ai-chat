@@ -6,5 +6,9 @@ cd "$(dirname "$0")"
 
 echo "=== EUR-Lex AI Chat Backend Startup ==="
 echo "Python: $(python3 --version)"
+echo "Installing CPU-only PyTorch (smaller for Render)..."
+pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet --no-cache-dir
+pip install sentence-transformers --quiet --no-cache-dir
 
+echo "Starting uvicorn..."
 exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
