@@ -1,0 +1,12 @@
+name: Refresh Index
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -sSf "https://nedaktovops-eurlex-chat-api.hf.space/refresh"
