@@ -33,7 +33,7 @@ jobs:
         run: python3 scripts/backup_index.py
 
       - name: Rebuild index with EURLEX-BERT (if triggered)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_index }}
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_index == 'true' }}
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           EMBEDDING_MODEL: ${{ inputs.embedding_model }}
