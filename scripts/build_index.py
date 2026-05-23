@@ -77,6 +77,16 @@ except Exception:
 
 # Configuration
 
+EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+INDEX_SUFFIX = os.environ.get("INDEX_SUFFIX", "")  # e.g., "_eurlex" for EURLEX-BERT
+
+# Model-dependent defaults
+_IS_EURLEX = "eurlex" in EMBEDDING_MODEL.lower()
+EMBED_DIM = 768 if _IS_EURLEX else 384
+# PQ config: 384/48 = 8 sub-quantizers, 768/48 = 16 sub-quantizers
+PQ_BITS = 48
+FAISS_INDEX_FACTORY = f"IVF{{nlist}},PQ{PQ_BITS}x{{dim//PQ_BITS}}"
+
 SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
 
 DOC_TYPES = [
@@ -86,7 +96,6 @@ DOC_TYPES = [
 
 FROM_DATE = "2004-01-01"
 DOWNLOAD_WORKERS = 20
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 HF_DATASET_NAME = "eurlex-chat-data"
 
 
@@ -286,33 +295,52 @@ def extract_meaningful_paragraphs(text):
 
 
 def embed_chunks(all_chunks, batch_size=1024):
-    """Embed all chunks using sentence-transformers.
+    """Embed all chunks using sentence-transformers or EURLEX-BERT.
 
-    Memory-efficient batching: embed BATCH_SIZE chunks at a time,
-    append to list, then vstack at the end. Peak memory during
-    embedding = model(~250MB) + embeddings(~700MB at 456K chunks).
+    Uses EMBEDDING_MODEL from environment (default: all-MiniLM-L6-v2).
+    Memory-efficient batching: embed BATCH_SIZE chunks at a time.
     """
-    from sentence_transformers import SentenceTransformer
+    if _IS_EURLEX:
+        logger.info(f"Loading EURLEX-BERT model: {EMBEDDING_MODEL} (768-dim)")
+        from transformers import AutoTokenizer, AutoModel
+        import torch
+        tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
+        model = AutoModel.from_pretrained(EMBEDDING_MODEL)
+        model.eval()
 
-    logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-    model = SentenceTransformer(EMBEDDING_MODEL)
-    logger.info("Model loaded")
-
-    texts = [c["text"] for c in all_chunks]
-    all_embeddings = []
-
-    logger.info(f"Embedding {len(texts)} chunks in batches of {batch_size}...")
-    total_batches = (len(texts) + batch_size - 1) // batch_size
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i : i + batch_size]
-        batch_num = i // batch_size + 1
-        embeddings = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
-        all_embeddings.append(embeddings)
-
-        if batch_num % 5 == 0 or batch_num == total_batches:
-            mem_mb = _get_memory_mb()
-            logger.info(f"  Embedded {min(i + batch_size, len(texts))}/{len(texts)} "
-                        f"(batch {batch_num}/{total_batches}) [mem: {mem_mb:.0f}MB]")
+        texts = [c["text"] for c in all_chunks]
+        all_embeddings = []
+        logger.info(f"Embedding {len(texts)} chunks with EURLEX-BERT...")
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            encoded = tokenizer(batch, padding=True, truncation=True, max_length=512, return_tensors="pt")
+            with torch.no_grad():
+                output = model(**encoded)
+            # Mean pooling
+            mask = encoded["attention_mask"].unsqueeze(-1).expand(output[0].size()).float()
+            embeddings = torch.sum(output[0] * mask, 1) / torch.clamp(mask.sum(1), min=1e-9)
+            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+            all_embeddings.append(embeddings.numpy())
+            if (i // batch_size + 1) % 5 == 0 or i + batch_size >= len(texts):
+                logger.info(f"  Embedded {min(i + batch_size, len(texts))}/{len(texts)}")
+    else:
+        from sentence_transformers import SentenceTransformer
+        logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
+        model = SentenceTransformer(EMBEDDING_MODEL)
+        logger.info("Model loaded")
+        texts = [c["text"] for c in all_chunks]
+        all_embeddings = []
+        logger.info(f"Embedding {len(texts)} chunks in batches of {batch_size}...")
+        total_batches = (len(texts) + batch_size - 1) // batch_size
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            embeddings = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
+            all_embeddings.append(embeddings)
+            if batch_num % 5 == 0 or batch_num == total_batches:
+                mem_mb = _get_memory_mb()
+                logger.info(f"  Embedded {min(i + batch_size, len(texts))}/{len(texts)} "
+                            f"(batch {batch_num}/{total_batches}) [mem: {mem_mb:.0f}MB]")
 
     return np.vstack(all_embeddings).astype(np.float32)
 
@@ -338,24 +366,21 @@ def _get_memory_mb():
 def build_faiss_index(vectors):
     """Build FAISS IVFPQ index and return the path.
 
-    Uses IVF(nlist) + PQ48x8 for memory-efficient approximate search.
-    Evidence:
-      - nlist = 4*sqrt(N) per FAISS issue #2692
-      - PQ48x8 = 48 bytes/vector (384/48 = 8 dims per sub-quantizer)
-      - use_precomputed_table=-1 to save ~127MB of precomputed tables
-      - nprobe ~ sqrt(nlist) for optimal recall/speed tradeoff
+    Uses IVF(nlist) + PQ{nbits}x{m} for memory-efficient approximate search.
+    Config auto-adapts to embedding dimension (384 for MiniLM, 768 for EURLEX-BERT).
     """
     if faiss is None:
         raise RuntimeError("faiss not installed. Run: pip install faiss-cpu")
 
     n_vectors, dim = vectors.shape
-    # nlist = 4*sqrt(N) as recommended by FAISS guidelines (issue #2692)
     n_centroids = min(int(4 * np.sqrt(n_vectors)), max(n_vectors // 40, 1))
     n_centroids = max(n_centroids, 1)
 
-    index = faiss.index_factory(
-        dim, f"IVF{n_centroids},PQ48x8", faiss.METRIC_INNER_PRODUCT
-    )
+    m = dim // PQ_BITS
+    factory_str = FAISS_INDEX_FACTORY.format(nlist=n_centroids, dim=dim)
+    logger.info(f"FAISS factory: {factory_str} ({dim}D, {m} sub-quantizers)")
+
+    index = faiss.index_factory(dim, factory_str, faiss.METRIC_INNER_PRODUCT)
 
     logger.info(f"Training FAISS index: {n_centroids} centroids on {n_vectors} vectors...")
     index.train(vectors.astype(np.float32))
@@ -374,7 +399,7 @@ def build_faiss_index(vectors):
     index.nprobe = nprobe
     logger.info(f"nprobe set to {nprobe}")
 
-    index_path = os.path.join(DATA_DIR, "index.faiss")
+    index_path = os.path.join(DATA_DIR, f"index{INDEX_SUFFIX}.faiss")
     faiss.write_index(index, index_path)
     index_size = os.path.getsize(index_path) / 1e6
     logger.info(f"FAISS index saved: {index_size:.1f} MB")
@@ -383,7 +408,7 @@ def build_faiss_index(vectors):
 
 def build_chunks_db(all_chunks):
     """Build SQLite database of chunks and return the path."""
-    db_path = os.path.join(DATA_DIR, "chunks.db")
+    db_path = os.path.join(DATA_DIR, f"chunks{INDEX_SUFFIX}.db")
     conn = sqlite3.connect(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS chunks (
@@ -431,6 +456,9 @@ def upload_to_hub(index_path, db_path, dataset_name, token, success_count=0, chu
         "git_rev": GIT_REV,
         "n_documents": success_count,
         "n_chunks": chunk_count,
+        "embedding_model": EMBEDDING_MODEL,
+        "dimension": EMBED_DIM,
+        "index_suffix": INDEX_SUFFIX,
     }
     with open(ts_path, "w") as f:
         f.write(ts)
@@ -439,16 +467,19 @@ def upload_to_hub(index_path, db_path, dataset_name, token, success_count=0, chu
     with open(meta_path, "w") as f:
         json.dump(build_meta, f, indent=2)
 
+    index_hf_path = f"index{INDEX_SUFFIX}.faiss"
+    db_hf_path = f"chunks{INDEX_SUFFIX}.db"
+
     api.upload_file(
         repo_id=repo_id,
-        path_in_repo="index.faiss",
+        path_in_repo=index_hf_path,
         path_or_fileobj=index_path,
         repo_type="dataset",
         token=token,
     )
     api.upload_file(
         repo_id=repo_id,
-        path_in_repo="chunks.db",
+        path_in_repo=db_hf_path,
         path_or_fileobj=db_path,
         repo_type="dataset",
         token=token,

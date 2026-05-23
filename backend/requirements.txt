@@ -7,3 +7,4 @@ httpx==0.28.1
 huggingface_hub==1.15.0
 sentence-transformers==3.4.1
 faiss-cpu==1.13.2
+onnxruntime==1.26.0

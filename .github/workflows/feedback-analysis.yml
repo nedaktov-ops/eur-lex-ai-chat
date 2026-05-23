@@ -1,0 +1,25 @@
+name: Weekly Feedback Analysis
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # Every Monday at 8:00 UTC
+  workflow_dispatch:        # Manual trigger
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run feedback analysis
+        run: |
+          echo "Starting weekly feedback analysis..."
+          echo "Note: Pipeline logs are stored on Render's ephemeral disk."
+          echo "For persistent log analysis, configure a log aggregator."
+          echo ""
+          echo "To run locally:"
+          echo "  cat /path/to/server.log | python3 scripts/feedback_analyzer.py"

@@ -16,6 +16,12 @@ dist/
 # Data (will be uploaded to HF Hub, not committed to git)
 data/
 
+# Checkpoints (restorable from checkpoint_restore.py)
+.checkpoints/
+
+# Memory artifacts (per-session)
+memory/
+
 # OS
 .DS_Store
 Thumbs.db

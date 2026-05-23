@@ -1,0 +1,44 @@
+name: Daily Backup
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"   # Every 6 hours
+  workflow_dispatch:          # Manual trigger
+    inputs:
+      rebuild_index:
+        description: "Rebuild index with EURLEX-BERT (768-dim)"
+        type: boolean
+        default: false
+      embedding_model:
+        description: "Embedding model for rebuild"
+        default: "nlpaueb/bert-base-uncased-eurlex"
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install huggingface_hub
+
+      - name: Create backup
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python3 scripts/backup_index.py
+
+      - name: Rebuild index with EURLEX-BERT (if triggered)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_index }}
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          EMBEDDING_MODEL: ${{ inputs.embedding_model }}
+          INDEX_SUFFIX: "_eurlex"
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install sentence-transformers faiss-cpu transformers beautifulsoup4 requests tqdm
+          python3 scripts/build_index.py

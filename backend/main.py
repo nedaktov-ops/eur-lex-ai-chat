@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from logging_middleware import PipelineLoggingMiddleware, log_query_received, log_query_processed, log_search_performed, log_prompt_built, log_llm_call, log_answer_generated, log_response_returned
 from fastapi.responses import JSONResponse
 
 logging.basicConfig(
@@ -18,11 +19,19 @@ logger = logging.getLogger(__name__)
 _embedding_model = None
 
 
-def get_embedding_model():
+def get_embedding_model(index_suffix=""):
     global _embedding_model
-    if _embedding_model is None:
+    if _embedding_model is not None:
+        return _embedding_model
+
+    suffix = index_suffix or os.environ.get("INDEX_SUFFIX", "")
+    if "eurlex" in suffix.lower():
+        from data_loader import EURLEXEmbedder
+        logger.info("Loading EURLEX-BERT embedding model (768-dim)")
+        _embedding_model = EURLEXEmbedder()
+    else:
         from sentence_transformers import SentenceTransformer
-        logger.info("Loading embedding model: all-MiniLM-L6-v2")
+        logger.info("Loading embedding model: all-MiniLM-L6-v2 (384-dim)")
         _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
     return _embedding_model
 
@@ -31,15 +40,16 @@ def get_embedding_model():
 async def lifespan(app: FastAPI):
     from data_loader import download_index
 
-    logger.info("Starting up — loading index...")
+    index_suffix = os.environ.get("INDEX_SUFFIX", "")
+    logger.info(f"Starting up — loading index (suffix='{index_suffix}')...")
     try:
-        download_index()
+        download_index(index_suffix=index_suffix)
         logger.info("Index loaded successfully")
     except Exception as e:
         logger.error(f"Failed to load index: {e}")
 
     logger.info("Pre-loading embedding model...")
-    get_embedding_model()
+    get_embedding_model(index_suffix=index_suffix)
     logger.info("Embedding model loaded")
 
     yield
@@ -59,6 +69,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(PipelineLoggingMiddleware)
 
 
 @app.get("/health")
@@ -97,11 +108,43 @@ async def refresh():
         )
 
 
+@app.post("/backup")
+async def backup():
+    """Manually trigger a backup of the current index to HuggingFace Hub."""
+    from data_loader import create_backup
+
+    try:
+        backup_dir = create_backup()
+        if backup_dir:
+            return {
+                "status": "ok",
+                "message": f"Backup created at {backup_dir}",
+                "backup_path": str(backup_dir),
+            }
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Backup failed"},
+            )
+    except Exception as e:
+        logger.error(f"Backup failed: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": str(e)},
+        )
+
+
 @app.post("/chat")
 async def chat(request: Request):
+    import json
+    import time
+
     from rate_limit import is_rate_limited
-    from search import search
+    from search import search_discourse_aware
     from rag import answer_question
+    from question_classifier import EUQuestionClassifier
+    from query_expander import expand_obligation_query, expand_query
+    from answer_validator import AnswerValidator, estimate_confidence
 
     client_ip = request.client.host if request.client else "unknown"
 
@@ -118,18 +161,169 @@ async def chat(request: Request):
     if len(query) > 2000:
         raise HTTPException(status_code=400, detail="Query too long (max 2000 chars)")
 
-    model = get_embedding_model()
-    query_vector = model.encode(query, normalize_embeddings=True)
+    # === Stage 1: Query Received ===
+    request_id = getattr(request.state, "request_id", None)
+    log_query_received(request_id, query, client_ip)
 
-    chunks = search(query_vector, top_k=10)
+    # === Stage 2: Query Classification ===
+    classifier = EUQuestionClassifier()
+    classification = classifier.classify(query)
+
+    # Check if we need clarification
+    if classifier.needs_clarification(classification):
+        log_query_processed(request_id, classification=classification)
+        log_answer_generated(request_id, 0, 0, 0, False)
+        log_response_returned(request_id, 200, 72, True)
+        return {
+            "answer": "I can help with EU law topics including GDPR, the AI Act, "
+                      "the Pay Transparency Directive, and more. Could you please "
+                      "rephrase your question to be more specific?",
+            "citations": [],
+            "sources": [],
+        }
+
+    # === Stage 3: Query Expansion ===
+    if classification.get("obligation_seeking"):
+        query_variations = expand_obligation_query(query)
+    else:
+        query_variations = expand_query(query)
+
+    # Limit to 5 variations to control latency
+    query_variations = query_variations[:5]
+
+    log_query_processed(
+        request_id,
+        classification=classification,
+        expanded_queries=query_variations[1:],
+    )
+
+    # === Stage 4: Aggregated Search ===
+    model = get_embedding_model()
+    search_start = time.time()
+
+    all_chunks = []
+    seen_ids = set()
+    for q_variant in query_variations:
+        query_vector = model.encode([q_variant], normalize_embeddings=True)
+        chunks = search_discourse_aware(query_vector, top_k=10, query_context=classification)
+        for chunk in chunks:
+            chunk_id = f"{chunk.get('celex', '')}-{chunk.get('article', '')}"
+            if chunk_id not in seen_ids:
+                seen_ids.add(chunk_id)
+                all_chunks.append(chunk)
+
+    search_duration_ms = (time.time() - search_start) * 1000
+
+    # Re-rank by adjusted_score (discourse-aware) or fallback to raw score
+    all_chunks.sort(key=lambda c: c.get("adjusted_score", c.get("score", 0)), reverse=True)
+    chunks = all_chunks[:10]
+
+    top_scores = [c.get("score", 0) for c in chunks[:3]] if chunks else []
+    query_vector_shape = (1, 384)
+    log_search_performed(
+        request_id, query_vector_shape, len(chunks), top_scores, search_duration_ms,
+    )
+
     if not chunks:
+        log_answer_generated(request_id, 0, 0, 0, False)
+        log_response_returned(request_id, 200, 0, True)
         return {
             "answer": "I don't have enough information to answer that question. Try asking about a specific EU regulation or directive.",
             "citations": [],
             "sources": [],
         }
 
-    result = answer_question(query, chunks)
+    # === Stage 5: Confidence Gating ===
+    should_answer, reason = classifier.should_answer(classification, chunks)
+    if not should_answer:
+        log_answer_generated(request_id, 0, len(chunks), 0, False)
+        log_response_returned(request_id, 200, 0, True)
+        if "obligation" in reason and classification.get("obligation_seeking"):
+            return {
+                "answer": f"I found documents mentioning '{query}' but couldn't identify "
+                          f"specific employer obligations in the retrieved texts. The relevant "
+                          f"articles may need more specific terms. Try asking about a particular "
+                          f"aspect of employer responsibilities under this directive.",
+                "citations": [c.get("celex") for c in chunks[:3]],
+                "sources": [{
+                    "celex": c.get("celex"),
+                    "title": c.get("title"),
+                    "article": c.get("article"),
+                    "score": c.get("score"),
+                } for c in chunks[:3]],
+            }
+        else:
+            return {
+                "answer": "I don't have enough information to answer that question. "
+                         "Try asking about a specific EU regulation or directive.",
+                "citations": [],
+                "sources": [],
+            }
+
+    # === Stage 6: Answer Generation (with classification context) ===
+    result = answer_question(query, chunks, request_id=request_id, classification=classification)
+
+    # === Stage 7: Answer Validation ===
+    validator = AnswerValidator()
+    passes_validation, validation_reason = validator.validate(
+        query=query, answer=result.get("answer", ""),
+        chunks=chunks, classification=classification,
+    )
+
+    if not passes_validation:
+        logger.warning(f"Answer validation failed: {validation_reason} | query: {query[:80]}")
+        # Retry once with CELEX citation emphasis
+        logger.info(f"Retrying with citation emphasis for {request_id}")
+        result2 = answer_question(
+            query, chunks, request_id=request_id,
+            classification=classification, retry_with_citation_emphasis=True,
+        )
+        passes_v2, reason_v2 = validator.validate(
+            query=query, answer=result2.get("answer", ""),
+            chunks=chunks, classification=classification,
+        )
+        if passes_v2:
+            logger.info(f"Retry succeeded for {request_id}")
+            result = result2
+            passes_validation = True
+            validation_reason = reason_v2
+        else:
+            logger.warning(f"Retry also failed: {reason_v2} for {request_id}")
+            fallback = validator.make_fallback_answer(
+                query, chunks, classification=classification,
+                validation_reason=validation_reason,
+            )
+            fallback_result = {
+                "answer": fallback,
+                "citations": list(dict.fromkeys(c.get("celex") for c in chunks[:5] if c.get("celex"))),
+                "sources": [{
+                    "celex": c.get("celex"), "title": c.get("title"),
+                    "article": c.get("article"), "score": c.get("score"),
+                } for c in chunks[:5]],
+            }
+            log_answer_generated(
+                request_id, len(fallback), len(fallback_result.get("citations", [])),
+                len(fallback_result.get("sources", [])),
+                validation_passed=False,
+            )
+            log_response_returned(request_id, 200, len(json.dumps(fallback_result)))
+            return fallback_result
+
+    # === Stage 8: Confidence Estimation ===
+    confidence = estimate_confidence(chunks, classification=classification)
+    answer_text = result.get("answer", "") or ""
+
+    log_answer_generated(
+        request_id, len(answer_text), len(result.get("citations", [])),
+        len(result.get("sources", [])), validation_passed=True,
+        confidence=confidence,
+    )
+
+    # === Stage 9: Response Returned ===
+    result["_confidence"] = confidence["level"]
+    response_json = json.dumps(result)
+    log_response_returned(request_id, 200, len(response_json))
+
     return result
 
 
