@@ -1,9 +1,4 @@
-"""FAISS KNN search over IVFPQ index + SQLite chunk lookup.
-
-Phase 2 additions:
-- discourse_boost(): boosts chunks based on legal discourse type and query intent
-- search_discourse_aware(): FAISS search with discourse-aware re-ranking
-"""
+"""FAISS KNN search over IVFPQ index + SQLite chunk lookup."""
 
 import logging
 
