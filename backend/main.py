@@ -145,6 +145,7 @@ async def chat(request: Request):
     from question_classifier import EUQuestionClassifier
     from query_expander import expand_obligation_query, expand_query
     from answer_validator import AnswerValidator, estimate_confidence
+    from query_expander import AutoExpander
 
     client_ip = request.client.host if request.client else "unknown"
 
@@ -289,6 +290,7 @@ async def chat(request: Request):
             validation_reason = reason_v2
         else:
             logger.warning(f"Retry also failed: {reason_v2} for {request_id}")
+            AutoExpander().record_failure(query, reason_v2)
             fallback = validator.make_fallback_answer(
                 query, chunks, classification=classification,
                 validation_reason=validation_reason,
