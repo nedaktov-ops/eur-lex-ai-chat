@@ -295,13 +295,7 @@ def extract_meaningful_paragraphs(text):
 
 
 def embed_chunks(all_chunks, batch_size=1024):
-    """Embed all chunks using sentence-transformers.
-
-    Memory-efficient batching: embed BATCH_SIZE chunks at a time,
-    append to list, then vstack at the end. Peak memory during
-    embedding = model(~250MB) + embeddings(~700MB at 456K chunks).
-    """
-    from sentence_transformers import SentenceTransformer
+    """Embed all chunks using sentence-transformers or EURLEX-BERT.
 
     Uses EMBEDDING_MODEL from environment (default: all-MiniLM-L6-v2).
     Memory-efficient batching: embed BATCH_SIZE chunks at a time.
