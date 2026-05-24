@@ -326,6 +326,10 @@ def embed_chunks(all_chunks, batch_size=None):
         tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
         model = AutoModel.from_pretrained(EMBEDDING_MODEL)
         model.eval()
+    else:
+        logger.info(f"Loading sentence-transformers model: {EMBEDDING_MODEL} (384-dim)")
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(EMBEDDING_MODEL)
 
     texts = [c["text"] for c in all_chunks]
     all_embeddings = []
@@ -426,6 +430,11 @@ def build_faiss_index(vectors):
 def build_chunks_db(all_chunks):
     """Build SQLite database of chunks and return the path."""
     db_path = os.path.join(DATA_DIR, "chunks.db")
+    # Ensure fresh start: delete existing DB if present
+    if os.path.exists(db_path):
+        os.remove(db_path)
+        logger.debug(f"Removed existing chunks.db at {db_path}")
+
     conn = sqlite3.connect(db_path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS chunks (

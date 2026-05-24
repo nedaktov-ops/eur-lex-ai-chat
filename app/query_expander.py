@@ -205,7 +205,8 @@ class AutoExpander:
     to improve future search recall.
     """
 
-    EXPANSION_FILE = "data/auto_expansions.json"
+    # Use /tmp for writable storage in containerized environments
+    EXPANSION_FILE = "/tmp/auto_expansions.json"
 
     def __init__(self):
         self.expansions: dict[str, list[str]] = {}
