@@ -29,22 +29,31 @@ def log_pipeline_stage(stage, request_id, data, level="INFO"):
 
 SYSTEM_PROMPT = """You are a legal AI assistant specialized in EU law. You help users understand EU legislation by answering their questions based on provided context from EUR-Lex documents.
 
+CRITICAL: Your answer MUST include CELEX numbers (e.g., 32023L0970) inline for each source you reference. Every factual claim must be attributed to a specific CELEX document.
+
 Guidelines:
 1. Answer based ONLY on the provided context. If the context doesn't contain enough information, say so.
-2. Always cite the specific EUR-Lex document(s) you used with their CELEX numbers.
-3. When citing articles, include the article number and CELEX number.
+2. Always cite the specific EUR-Lex document(s) you used with their CELEX numbers INLINE in your answer text.
+3. When citing articles, include the article number and CELEX number (e.g., "Article 5 of Directive 2023/970 (CELEX 32023L0970)").
 4. Keep answers clear and accessible — explain legal concepts in plain language.
 5. If the user asks in a non-English language, respond in that language.
 6. Do not make up legal citations or references. Only cite what's in the context.
 7. Be honest about limitations — if you're unsure, say so.
 8. When discussing obligations, distinguish between mandatory requirements ('shall') and permissions ('may').
-9. Synthesize information from multiple sources when relevant."""
+9. Synthesize information from multiple sources when relevant.
+
+OUTPUT FORMAT:
+- Write a concise, informative answer.
+- Include CELEX numbers INLINE for every source you use, like: "Under Directive 2023/970 (CELEX 32023L0970), employers must..."
+- Your answer MUST contain at least 2 CELEX numbers from the provided context."""
 
 ENSURE_CITATION_PROMPT = """
-CRITICAL: Your answer MUST include the CELEX number (e.g., 32023L0970) for each source you cite.
-Every claim must be attributed to a specific CELEX document.
-If you use information from a provided context chunk, cite its CELEX number inline.
-Do not use generic references like "the directive" or "the regulation" without the CELEX number."""
+CRITICAL: Your previous answer did NOT include enough CELEX number citations. This is a HARD REQUIREMENT.
+- Your answer MUST include at least 2 CELEX numbers (e.g., 32023L0970) INLINE in the text.
+- Every claim must be attributed to a specific CELEX document.
+- If you use information from a provided context chunk, cite its CELEX number inline.
+- Do not use generic references like "the directive" or "the regulation" without the CELEX number.
+- Example format: "Under Directive 2023/970 (CELEX 32023L0970), employers must..." """
 
 
 def build_prompt(query, context_chunks, classification=None, extra_system_notes=None):
@@ -118,10 +127,11 @@ Based on the above legal texts, please answer the following question:
 
 Remember to:
 1. Answer directly using the provided legal texts
-2. Cite specific articles and CELEX numbers for each point
+2. Include CELEX numbers (e.g., 32023L0970) INLINE in your answer for every source you reference
 3. Distinguish between mandatory obligations ('shall') and permissions ('may')
 4. If the texts don't fully answer the question, clearly state what information is missing
-5. Synthesize information from multiple sources when relevant"""
+5. Synthesize information from multiple sources when relevant
+6. At least 2 of your cited sources MUST have their CELEX number in the answer text"""
 
     return prompt
 
@@ -206,9 +216,9 @@ def answer_question(query, context_chunks, request_id=None, classification=None,
     Returns:
         Dict with answer, citations, and sources.
     """
-    extra_notes = None
+    extra_notes = ENSURE_CITATION_PROMPT
     if retry_with_citation_emphasis:
-        extra_notes = ENSURE_CITATION_PROMPT
+        extra_notes = ENSURE_CITATION_PROMPT + "\n\nThis is your SECOND attempt. The first answer failed because it did not include enough CELEX citations. You MUST include at least 2 CELEX numbers inline this time."
     prompt = build_prompt(query, context_chunks, classification=classification,
                           extra_system_notes=extra_notes)
     prompt_length = len(prompt)
