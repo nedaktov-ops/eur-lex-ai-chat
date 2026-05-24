@@ -1,3 +1,13 @@
+---
+title: EUR-Lex AI Chat
+emoji: ⚖️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+app_port: 7860
+---
+
 # EUR-Lex AI Chat
 
 > An intelligent legal reasoning assistant for EU law — powered by RAG, discourse-aware search, and answer validation.
