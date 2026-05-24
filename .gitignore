@@ -16,6 +16,10 @@ dist/
 # Data (will be uploaded to HF Hub, not committed to git)
 data/
 
+# ONNX model binaries (stored on HF dataset, too large for git)
+onnx-model/model.onnx
+onnx-model/model.quant.onnx
+
 # Checkpoints (restorable from checkpoint_restore.py)
 .checkpoints/
 

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import faiss
+import numpy as np
 from huggingface_hub import HfApi, hf_hub_download
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,89 @@ _index_data = {
     "last_updated": None,
     "loaded_at": None,
 }
+
+
+class EURLEXEmbedder:
+    """768-dim legal embeddings via ONNX Runtime for EURLEX-BERT.
+
+    Loads quantized ONNX model + tokenizer on first use.
+    Used for query encoding at runtime (not for bulk index building).
+    """
+
+    def __init__(self, model_name: str = "nlpaueb/bert-base-uncased-eurlex"):
+        self.model_name = model_name
+        self._tokenizer = None
+        self._session = None
+        self._dim = 768
+
+    def _load(self):
+        """Lazy-load tokenizer and ONNX session."""
+        if self._session is not None:
+            return
+
+        import onnxruntime as ort
+        from transformers import AutoTokenizer
+
+        # Try local ONNX model first, fall back to PyTorch
+        local_path = os.path.join(os.path.dirname(__file__), "..", "data", "eurlex-bert-onnx", "model.quant.onnx")
+
+        if os.path.exists(local_path):
+            model_path = local_path
+        else:
+            from huggingface_hub import hf_hub_download
+            model_path = hf_hub_download(
+                repo_id="NedAktovOps/eurlex-chat-data",
+                filename="onnx_models/eurlex-bert/model.quant.onnx"
+            )
+
+        self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self._session = ort.InferenceSession(
+            model_path,
+            providers=["CPUExecutionProvider"],
+        )
+        logger.info(f"EURLEXEmbedder loaded: {self.model_name} ({self._dim}-dim, model={model_path})")
+
+    def encode(self, texts: list[str], batch_size: int = 32) -> list:
+        """Encode texts to 768-dim embeddings.
+
+        Args:
+            texts: List of text strings to encode
+            batch_size: Inference batch size (default 32)
+
+        Returns:
+            List of embedding vectors (list of lists)
+        """
+        self._load()
+
+        all_embeddings = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            encoded = self._tokenizer(
+                batch, padding=True, truncation=True,
+                max_length=512, return_tensors="np",
+            )
+
+            feed = {
+                "input_ids": encoded["input_ids"],
+                "attention_mask": encoded["attention_mask"],
+            }
+            if "token_type_ids" in encoded:
+                feed["token_type_ids"] = encoded["token_type_ids"]
+
+            outputs = self._session.run(None, feed)[0]
+
+            # Mean pooling
+            mask = encoded["attention_mask"][:, :, None].astype(outputs.dtype)
+            mask_sum = mask.sum(axis=1)
+            embeddings = (outputs * mask).sum(axis=1) / np.maximum(mask_sum, 1e-9)
+
+            # L2 normalize
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            embeddings = embeddings / np.maximum(norms, 1e-9)
+
+            all_embeddings.append(embeddings)
+
+        return np.vstack(all_embeddings).tolist()
 
 
 def download_index(index_suffix=""):

@@ -1,0 +1,201 @@
+name: EURLEX-BERT Index Rebuild
+
+on:
+  workflow_dispatch:
+    inputs:
+      total_shards:
+        description: "Number of parallel shards"
+        type: number
+        default: 10
+      embedding_model:
+        description: "ONNX model path on HF"
+        default: "onnx_models/eurlex-bert/model.quant.onnx"
+
+env:
+  HF_TOKEN: ${{ secrets.HF_TOKEN }}
+  MODEL_REPO: NedAktovOps/eurlex-chat-data
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install huggingface_hub faiss-cpu numpy
+      - name: Download chunks.db from HF backup
+        run: |
+          python3 scripts/backup_index.py || echo "Backup download skipped"
+      - name: Export chunks to JSON
+        run: |
+          python3 -c "
+          import sqlite3, json
+          conn = sqlite3.connect('data/chunks.db')
+          rows = conn.execute('SELECT celex, article, text FROM chunks').fetchall()
+          chunks = [{'celex': r[0], 'article': r[1], 'text': r[2]} for r in rows]
+          with open('data/chunks.json', 'w') as f:
+              json.dump(chunks, f)
+          print(f'Exported {len(chunks)} chunks to data/chunks.json')
+          "
+      - name: Upload chunks.json
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunks-json
+          path: data/chunks.json
+          retention-days: 1
+
+  embed:
+    needs: download
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+      max-parallel: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          pip install onnxruntime>=1.18.0 numpy>=1.24.0 transformers>=4.44.0 huggingface_hub
+      - name: Download ONNX model
+        run: |
+          python3 -c "
+          from huggingface_hub import hf_hub_download
+          import os
+          os.makedirs('data/eurlex-bert-onnx', exist_ok=True)
+          hf_hub_download(
+              repo_id=os.environ['MODEL_REPO'],
+              filename=os.environ['MODEL_PATH'],
+              local_dir='data/eurlex-bert-onnx',
+              local_dir_use_symlinks=False,
+              token=os.environ.get('HF_TOKEN'),
+          )
+          import glob
+          for f in glob.glob('data/eurlex-bert-onnx/**'):
+              print(f)
+          "
+        env:
+          MODEL_PATH: ${{ inputs.embedding_model || 'onnx_models/eurlex-bert/model.quant.onnx' }}
+      - name: Download chunks
+        uses: actions/download-artifact@v4
+        with:
+          name: chunks-json
+          path: data/
+      - name: Generate embeddings for shard ${{ matrix.shard }}
+        run: |
+          python3 scripts/generate_embeddings.py \
+            --model-path data/eurlex-bert-onnx/model.quant.onnx \
+            --tokenizer-name nlpaueb/bert-base-uncased-eurlex \
+            --chunks data/chunks.json \
+            --shard ${{ matrix.shard }} \
+            --total-shards ${{ inputs.total_shards || 10 }} \
+            --output-dir data/embeddings \
+            --batch-size 32
+      - name: Upload shard embeddings
+        uses: actions/upload-artifact@v4
+        with:
+          name: embeddings-shard-${{ matrix.shard }}
+          path: |
+            data/embeddings/embeddings_shard_${{ matrix.shard }}.npy
+            data/embeddings/metadata_shard_${{ matrix.shard }}.json
+          retention-days: 7
+
+  merge:
+    needs: embed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install numpy faiss-cpu huggingface_hub
+      - name: Download all shard embeddings
+        run: |
+          for i in $(seq 0 $(( ${{ inputs.total_shards || 10 }} - 1 ))); do
+            gh run download --name embeddings-shard-$i --dir data/embeddings
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Merge shards and build FAISS index
+        run: |
+          python3 -c "
+          import numpy as np, json, os, faiss
+          from pathlib import Path
+
+          embed_dir = Path('data/embeddings')
+          shard_files = sorted(embed_dir.glob('embeddings_shard_*.npy'))
+          print(f'Found {len(shard_files)} shard files')
+
+          all_embeddings = []
+          all_metadata = []
+          for f in shard_files:
+              emb = np.load(f)
+              all_embeddings.append(emb)
+              meta_file = embed_dir / f'metadata_{f.stem.replace(\"embeddings_\", \"\")}.json'
+              if meta_file.exists():
+                  with open(meta_file) as mf:
+                      all_metadata.append(json.load(mf))
+
+          embeddings = np.vstack(all_embeddings)
+          print(f'Total embeddings: {embeddings.shape}')
+
+          # Build FAISS index (IVF with PQ compression)
+          dim = embeddings.shape[1]
+          nlist = min(4096, int(np.sqrt(embeddings.shape[0])))
+          quantizer = faiss.IndexFlatIP(dim)
+          index = faiss.IndexIVFPQ(quantizer, dim, nlist, 48, 8)
+          index.train(embeddings)
+          index.add(embeddings)
+          print(f'FAISS index: {index.ntotal} vectors, {index.d} dimensions')
+
+          # Save index
+          os.makedirs('data', exist_ok=True)
+          faiss.write_index(index, 'data/index.faiss')
+
+          # Save metadata
+          total_celexes = list(set(
+              cid for m in all_metadata for cid in m.get('celex_ids', [])
+          ))
+          meta = {
+              'ntotal': index.ntotal,
+              'dim': dim,
+              'nlist': nlist,
+              'code_size': 48,
+              'num_celexes': len(total_celexes),
+              'model': 'nlpaueb/bert-base-uncased-eurlex',
+              'suffix': '_eurlex',
+              'timestamp': json.dumps({}).__str__(),
+          }
+          with open('data/build_meta.json', 'w') as f:
+              json.dump(meta, f)
+          print(f'Build metadata saved')
+          "
+      - name: Upload FAISS index to HF dataset
+        run: |
+          python3 -c "
+          from huggingface_hub import HfApi
+          import os
+          api = HfApi(token=os.environ.get('HF_TOKEN'))
+          api.upload_file(
+              path_or_fileobj='data/index.faiss',
+              path_in_repo='index_eurlex.faiss',
+              repo_id=os.environ['MODEL_REPO'],
+              repo_type='dataset',
+          )
+          api.upload_file(
+              path_or_fileobj='data/build_meta.json',
+              path_in_repo='build_meta_eurlex.json',
+              repo_id=os.environ['MODEL_REPO'],
+              repo_type='dataset',
+          )
+          print('✓ Index uploaded to HF dataset')
+          "
