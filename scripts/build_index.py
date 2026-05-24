@@ -316,8 +316,21 @@ def embed_chunks(all_chunks, batch_size=1024):
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
         batch_num = i // batch_size + 1
-        embeddings = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
-        all_embeddings.append(embeddings)
+
+        if _IS_EURLEX:
+            import torch
+            inputs = tokenizer(batch, padding=True, truncation=True, max_length=512, return_tensors="pt")
+            with torch.no_grad():
+                outputs = model(**inputs)
+            attention_mask = inputs["attention_mask"]
+            token_embeddings = outputs.last_hidden_state
+            input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+            embeddings = (token_embeddings * input_mask_expanded).sum(1) / input_mask_expanded.sum(1).clamp(min=1e-9)
+            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+            all_embeddings.append(embeddings.cpu().numpy())
+        else:
+            embeddings = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
+            all_embeddings.append(embeddings)
 
         if batch_num % 5 == 0 or batch_num == total_batches:
             mem_mb = _get_memory_mb()
