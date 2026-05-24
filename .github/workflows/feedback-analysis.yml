@@ -15,11 +15,54 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run feedback analysis
+      - name: Install dependencies
+        run: pip install httpx
+
+      - name: Check API health
+        id: health
+        continue-on-error: true
         run: |
-          echo "Starting weekly feedback analysis..."
-          echo "Note: Pipeline logs are stored on Render's ephemeral disk."
-          echo "For persistent log analysis, configure a log aggregator."
+          RESPONSE=$(curl -sS --max-time 30 "https://nedaktovops-eurlex-chat-api.hf.space/health" 2>&1) || true
+          echo "$RESPONSE"
+          echo "HEALTH_RESPONSE<<EOF" >> $GITHUB_OUTPUT
+          echo "$RESPONSE" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Analyze feedback (if logs available)
+        continue-on-error: true
+        run: |
+          # Fetch health data as minimal feedback signal
+          echo '{"health_check": ${{ toJSON(steps.health.outputs.HEALTH_RESPONSE) }}, "timestamp": "'$(date -u +"%Y-%m-%dT%H:%M:%SZ")'"}' > /tmp/feedback_log.json
+          
+          echo "=== Feedback Analysis Report ==="
+          echo "Date: $(date -u)"
           echo ""
-          echo "To run locally:"
-          echo "  cat /path/to/server.log | python3 scripts/feedback_analyzer.py"
+          
+          if [ -n "${{ steps.health.outputs.HEALTH_RESPONSE }}" ]; then
+            STATUS=$(echo '${{ steps.health.outputs.HEALTH_RESPONSE }}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "parse-error")
+            echo "API Status: $STATUS"
+            
+            NTOTAL=$(echo '${{ steps.health.outputs.HEALTH_RESPONSE }}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('ntotal','?'))" 2>/dev/null || echo "parse-error")
+            echo "Index Size: $NTOTAL chunks"
+            
+            INDEX_DIM=$(echo '${{ steps.health.outputs.HEALTH_RESPONSE }}' | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('dim','?'))" 2>/dev/null || echo "N/A (MiniLM 384-dim)")
+            echo "Index Dim: $INDEX_DIM"
+          else
+            echo "⚠️ API health check failed — Space may be down"
+          fi
+          
+          echo ""
+          echo "=== Improvement Suggestions ==="
+          echo "Check HF Space logs at https://huggingface.co/spaces/nedaktovops/eurlex-chat-api"
+          echo "Review recent issues at https://github.com/nedaktov-ops/eur-lex-ai-chat/issues"
+
+      - name: Validate feedback_analyzer.py
+        run: |
+          echo "Validating feedback analyzer script..."
+          python3 -c "
+          import sys
+          sys.path.insert(0, 'scripts')
+          import feedback_analyzer
+          print(f'✓ feedback_analyzer imported successfully')
+          print(f'  Functions: {[x for x in dir(feedback_analyzer) if not x.startswith(\"_\")]}')
+          "
