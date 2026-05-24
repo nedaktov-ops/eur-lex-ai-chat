@@ -42,4 +42,4 @@ jobs:
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install sentence-transformers faiss-cpu transformers beautifulsoup4 requests tqdm
-          python3 scripts/build_index.py
+          python3 scripts/build_index.py --from-backup

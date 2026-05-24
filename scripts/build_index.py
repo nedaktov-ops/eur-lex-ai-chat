@@ -97,6 +97,7 @@ DOC_TYPES = [
 FROM_DATE = "2004-01-01"
 DOWNLOAD_WORKERS = 20
 HF_DATASET_NAME = "eurlex-chat-data"
+HF_BACKUP_DATASET = "NedAktovOps/eurlex-chat-backups"
 
 
 def query_all_documents():
@@ -507,7 +508,64 @@ def upload_to_hub(index_path, db_path, dataset_name, token, success_count=0, chu
     return repo_id
 
 
+def load_chunks_from_backup(token):
+    """Load chunks from the latest HF backup dataset, skipping SPARQL crawl.
+
+    Returns list of chunk dicts with keys: celex, title, article, type, text.
+    Returns empty list if no backup found.
+    """
+    from huggingface_hub import HfApi
+    import tempfile, shutil
+
+    api = HfApi(token=token)
+    try:
+        refs = api.list_repo_refs(HF_BACKUP_DATASET, repo_type="dataset")
+        backup_branches = [b for b in (refs.branches or []) if b.name.startswith("backup-")]
+        if not backup_branches:
+            logger.warning("No backup branches found in %s", HF_BACKUP_DATASET)
+            return []
+        latest = sorted(backup_branches, key=lambda b: b.name, reverse=True)[0]
+        logger.info("Loading chunks from backup: %s@%s", HF_BACKUP_DATASET, latest.name)
+    except Exception:
+        logger.warning("Could not list backup branches (dataset may not exist yet)")
+        return []
+
+    restore_dir = tempfile.mkdtemp(prefix="backup-restore-")
+    try:
+        api.snapshot_download(
+            repo_id=HF_BACKUP_DATASET,
+            repo_type="dataset",
+            revision=latest.name,
+            local_dir=restore_dir,
+            local_dir_use_symlinks=False,
+        )
+        db_path = os.path.join(restore_dir, "chunks.db")
+        if not os.path.exists(db_path):
+            logger.warning("No chunks.db in backup %s", latest.name)
+            return []
+
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute("SELECT celex, title, article, type, text FROM chunks ORDER BY id").fetchall()
+        conn.close()
+
+        chunks = [
+            {"celex": r[0], "title": r[1] or "", "article": r[2], "type": r[3], "text": r[4]}
+            for r in rows
+        ]
+        logger.info("Loaded %d chunks from backup", len(chunks))
+        return chunks
+    finally:
+        shutil.rmtree(restore_dir, ignore_errors=True)
+
+
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Build EUR-Lex vector index")
+    parser.add_argument("--from-backup", action="store_true",
+                        help="Load chunks from HF backup instead of SPARQL crawl")
+    args = parser.parse_args()
+
     hf_token = os.environ.get("HF_TOKEN")
     if not hf_token:
         logger.error("HF_TOKEN environment variable required")
@@ -519,6 +577,19 @@ def main():
         return
 
     total_start = time.time()
+
+    if args.from_backup:
+        all_chunks = load_chunks_from_backup(hf_token)
+        if not all_chunks:
+            logger.error("No backup chunks available, falling back to SPARQL crawl")
+            # fall through to SPARQL
+        else:
+            success_count = len(set(c["celex"] for c in all_chunks))
+            logger.info(f"Loaded {len(all_chunks)} chunks from backup "
+                        f"({success_count} documents)")
+            # Skip SPARQL/download — go straight to embedding
+            _build_from_chunks(all_chunks, success_count, hf_token, total_start)
+            return
 
     docs = query_all_documents()
     if not docs:
@@ -561,6 +632,11 @@ def main():
         logger.error("No chunks produced - check Cellar XHTML endpoint")
         return
 
+    _build_from_chunks(all_chunks, success_count, hf_token, total_start)
+
+
+def _build_from_chunks(all_chunks, success_count, hf_token, total_start):
+    """Embed chunks, build FAISS index + SQLite DB, and upload to HF Hub."""
     vectors = embed_chunks(all_chunks)
     dim = vectors.shape[1]
     logger.info(f"Embedding complete: {vectors.shape}")
