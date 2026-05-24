@@ -33,13 +33,60 @@ jobs:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: python3 scripts/backup_index.py || echo "Backup skipped (dataset may not exist)"
 
-      - name: Rebuild index with EURLEX-BERT (if triggered)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_index }}
+  download:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_index }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install sentence-transformers faiss-cpu transformers beautifulsoup4 requests tqdm huggingface_hub
+
+      - name: Download and chunk documents from SPARQL
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python3 scripts/build_index.py --download-only
+
+      - name: Upload chunks.db as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunks-db
+          path: data/chunks.db
+          retention-days: 7
+
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.rebuild_index }}
+    needs: download
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Download chunks.db artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: chunks-db
+          path: data/
+
+      - name: Install dependencies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install sentence-transformers faiss-cpu transformers beautifulsoup4 requests tqdm huggingface_hub
+
+      - name: Build FAISS index and upload to HF
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           EMBEDDING_MODEL: ${{ inputs.embedding_model }}
           INDEX_SUFFIX: "_eurlex"
-        run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install sentence-transformers faiss-cpu transformers beautifulsoup4 requests tqdm
-          python3 scripts/build_index.py --from-backup
+        run: python3 scripts/build_index.py --from-artifact

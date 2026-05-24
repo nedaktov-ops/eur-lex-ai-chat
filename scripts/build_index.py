@@ -508,6 +508,25 @@ def upload_to_hub(index_path, db_path, dataset_name, token, success_count=0, chu
     return repo_id
 
 
+def _load_chunks_from_db(db_path):
+    """Load chunks from a local chunks.db SQLite file.
+
+    Returns list of chunk dicts or empty list if file missing.
+    """
+    if not os.path.exists(db_path):
+        logger.warning("chunks.db not found at %s", db_path)
+        return []
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute("SELECT celex, title, article, type, text FROM chunks ORDER BY id").fetchall()
+    conn.close()
+    chunks = [
+        {"celex": r[0], "title": r[1] or "", "article": r[2], "type": r[3], "text": r[4]}
+        for r in rows
+    ]
+    logger.info("Loaded %d chunks from %s", len(chunks), db_path)
+    return chunks
+
+
 def load_chunks_from_backup(token):
     """Load chunks from the latest HF backup dataset, skipping SPARQL crawl.
 
@@ -540,69 +559,17 @@ def load_chunks_from_backup(token):
             local_dir_use_symlinks=False,
         )
         db_path = os.path.join(restore_dir, "chunks.db")
-        if not os.path.exists(db_path):
-            logger.warning("No chunks.db in backup %s", latest.name)
-            return []
-
-        conn = sqlite3.connect(db_path)
-        rows = conn.execute("SELECT celex, title, article, type, text FROM chunks ORDER BY id").fetchall()
-        conn.close()
-
-        chunks = [
-            {"celex": r[0], "title": r[1] or "", "article": r[2], "type": r[3], "text": r[4]}
-            for r in rows
-        ]
-        logger.info("Loaded %d chunks from backup", len(chunks))
-        return chunks
+        return _load_chunks_from_db(db_path)
     finally:
         shutil.rmtree(restore_dir, ignore_errors=True)
 
 
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Build EUR-Lex vector index")
-    parser.add_argument("--from-backup", action="store_true",
-                        help="Load chunks from HF backup instead of SPARQL crawl")
-    args = parser.parse_args()
-
-    hf_token = os.environ.get("HF_TOKEN")
-    if not hf_token:
-        logger.error("HF_TOKEN environment variable required")
-        logger.error("Usage: HF_TOKEN=hf_yourtoken python3 scripts/build_index.py")
-        return
-
-    if faiss is None:
-        logger.error("faiss not installed. Run: pip install faiss-cpu")
-        return
-
-    total_start = time.time()
-
-    if args.from_backup:
-        all_chunks = load_chunks_from_backup(hf_token)
-        if not all_chunks:
-            logger.error("No backup chunks available, falling back to SPARQL crawl")
-            # fall through to SPARQL
-        else:
-            success_count = len(set(c["celex"] for c in all_chunks))
-            logger.info(f"Loaded {len(all_chunks)} chunks from backup "
-                        f"({success_count} documents)")
-            # Skip SPARQL/download — go straight to embedding
-            _build_from_chunks(all_chunks, success_count, hf_token, total_start)
-            return
-
-    docs = query_all_documents()
-    if not docs:
-        logger.error("No documents found - SPARQL query returned empty")
-        return
-    logger.info(f"Documents to process: {len(docs)}")
-
+def _download_and_chunk(docs):
+    """Download documents from SPARQL, parse XHTML, return (chunks, success_count)."""
     logger.info(f"Downloading and parsing documents ({DOWNLOAD_WORKERS} workers)...")
     all_chunks = []
     success_count = 0
     with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as executor:
-        # Submit in batches so completed futures' results are freed promptly
-        # (never hold more than BATCH_SIZE futures in memory)
         BATCH_SIZE = DOWNLOAD_WORKERS * 3  # 60
         for batch_start in range(0, len(docs), BATCH_SIZE):
             batch = docs[batch_start:batch_start + BATCH_SIZE]
@@ -611,7 +578,7 @@ def main():
             }
             for future in tqdm(as_completed(future_map), total=len(future_map),
                                desc=f"Fetching {batch_start}-{batch_start + len(batch)}", leave=False):
-                doc = future_map.pop(future)  # pop immediately to free the future's result
+                doc = future_map.pop(future)
                 try:
                     html = future.result()
                     if html:
@@ -621,12 +588,92 @@ def main():
                 except Exception as e:
                     logger.debug(f"Failed {doc['celex']}: {e}")
 
-            # Batch done — future_map is empty, all batch futures freed
             logger.info(f"  Batch done: {success_count}/{batch_start + len(batch)} docs, "
                         f"{len(all_chunks)} chunks so far")
 
     logger.info(f"Downloaded {success_count}/{len(docs)} documents successfully")
     logger.info(f"Total chunks: {len(all_chunks)}")
+    return all_chunks, success_count
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Build EUR-Lex vector index")
+    parser.add_argument("--from-backup", action="store_true",
+                        help="Load chunks from HF backup instead of SPARQL crawl")
+    parser.add_argument("--from-artifact", action="store_true",
+                        help="Load chunks from local data/chunks.db (GitHub artifact)")
+    parser.add_argument("--download-only", action="store_true",
+                        help="Only download + chunk, save data/chunks.db, then exit")
+    args = parser.parse_args()
+
+    hf_token = os.environ.get("HF_TOKEN")
+    if not hf_token:
+        logger.error("HF_TOKEN environment variable required")
+        logger.error("Usage: HF_TOKEN=hf_yourtoken python3 scripts/build_index.py")
+        return
+
+    total_start = time.time()
+
+    # Mode 1: --download-only (SPARQL crawl → chunks.db, for Job 1)
+    if args.download_only:
+        if faiss is None:
+            logger.warning("faiss not installed (not needed for download-only)")
+        docs = query_all_documents()
+        if not docs:
+            logger.error("No documents found")
+            return
+        logger.info(f"Documents to process: {len(docs)}")
+        all_chunks, success_count = _download_and_chunk(docs)
+        if not all_chunks:
+            logger.error("No chunks produced")
+            return
+        build_chunks_db(all_chunks)
+        logger.info("Download phase complete. data/chunks.db ready for artifact.")
+        total_time = time.time() - total_start
+        logger.info(f"  Duration: {total_time / 60:.1f} minutes")
+        logger.info(f"  Documents: {success_count}")
+        logger.info(f"  Chunks: {len(all_chunks)}")
+        return
+
+    # Mode 2: --from-artifact (load chunks from local file, for Job 2)
+    if args.from_artifact:
+        db_path = os.path.join(DATA_DIR, "chunks.db")
+        all_chunks = _load_chunks_from_db(db_path)
+        if not all_chunks:
+            logger.error("No chunks found in data/chunks.db")
+            return
+        success_count = len(set(c["celex"] for c in all_chunks))
+        logger.info(f"Loaded {len(all_chunks)} chunks from artifact "
+                    f"({success_count} documents)")
+        _build_from_chunks(all_chunks, success_count, hf_token, total_start)
+        return
+
+    if faiss is None:
+        logger.error("faiss not installed. Run: pip install faiss-cpu")
+        return
+
+    # Mode 3: --from-backup (load from HF backup, existing behavior)
+    if args.from_backup:
+        all_chunks = load_chunks_from_backup(hf_token)
+        if not all_chunks:
+            logger.error("No backup chunks available")
+            return
+        success_count = len(set(c["celex"] for c in all_chunks))
+        logger.info(f"Loaded {len(all_chunks)} chunks from backup "
+                    f"({success_count} documents)")
+        _build_from_chunks(all_chunks, success_count, hf_token, total_start)
+        return
+
+    # Mode 4: Full pipeline (SPARQL → download → embed → FAISS → upload)
+    docs = query_all_documents()
+    if not docs:
+        logger.error("No documents found - SPARQL query returned empty")
+        return
+    logger.info(f"Documents to process: {len(docs)}")
+
+    all_chunks, success_count = _download_and_chunk(docs)
 
     if not all_chunks:
         logger.error("No chunks produced - check Cellar XHTML endpoint")
