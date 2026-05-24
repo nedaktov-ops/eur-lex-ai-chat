@@ -295,12 +295,14 @@ def extract_meaningful_paragraphs(text):
     return meaningful
 
 
-def embed_chunks(all_chunks, batch_size=1024):
+def embed_chunks(all_chunks, batch_size=None):
     """Embed all chunks using sentence-transformers or EURLEX-BERT.
 
     Uses EMBEDDING_MODEL from environment (default: all-MiniLM-L6-v2).
     Memory-efficient batching: embed BATCH_SIZE chunks at a time.
     """
+    if batch_size is None:
+        batch_size = 64 if _IS_EURLEX else 1024
     if _IS_EURLEX:
         logger.info(f"Loading EURLEX-BERT model: {EMBEDDING_MODEL} (768-dim)")
         from transformers import AutoTokenizer, AutoModel
