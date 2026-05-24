@@ -94,10 +94,26 @@ DOC_TYPES = [
     "DIR",
 ]
 
-FROM_DATE = "2004-01-01"
+FROM_DATE = os.environ.get("FROM_DATE", "2004-01-01")
+MAX_CHUNKS = os.environ.get("MAX_CHUNKS")
+if MAX_CHUNKS is not None:
+    MAX_CHUNKS = int(MAX_CHUNKS)
 DOWNLOAD_WORKERS = 20
 HF_DATASET_NAME = "eurlex-chat-data"
 HF_BACKUP_DATASET = "NedAktovOps/eurlex-chat-backups"
+
+
+def _cap_chunks(all_chunks, success_count):
+    """Truncate chunks to MAX_CHUNKS limit if set."""
+    if MAX_CHUNKS and len(all_chunks) > MAX_CHUNKS:
+        logger.warning("Capping chunks from %d to %d (MAX_CHUNKS=%d)",
+                       len(all_chunks), MAX_CHUNKS, MAX_CHUNKS)
+        # Keep only first MAX_CHUNKS chunks
+        truncated = all_chunks[:MAX_CHUNKS]
+        # Recompute success_count from unique CELEXes in remaining chunks
+        success_count = len(set(c["celex"] for c in truncated))
+        return truncated, success_count
+    return all_chunks, success_count
 
 
 def query_all_documents():

@@ -155,12 +155,11 @@ def restore_checkpoint(checkpoint_id: str, dry_run: bool = False):
         print(f"  Phase: {meta['phase']}")
         print(f"  Original timestamp: {meta['timestamp']}")
 
-        # If there are backend files, suggest restart
-        has_backend = any(f.startswith("backend/") for f in restored)
-        if has_backend:
+        # If there are app files, suggest restart
+        has_app = any(f.startswith("app/") for f in restored)
+        if has_app:
             print()
-            print("⚠️  Backend files were restored. Restart the backend server:")
-            print("   systemctl restart eurlex-chat-backend  # or your deployment method")
+            print("⚠️  App files were restored. Restart the API server:")
     else:
         print()
         print(f"Dry run complete: {len(restored)} files would be restored")

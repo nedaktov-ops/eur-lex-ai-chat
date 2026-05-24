@@ -24,22 +24,21 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 CHECKPOINT_DIR = PROJECT_ROOT / ".checkpoints"
-BACKEND_DIR = PROJECT_ROOT / "backend"
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 DATA_DIR = PROJECT_ROOT / "data"
 
 # Files to include in every checkpoint
 DEFAULT_FILES = [
-    "backend/main.py",
-    "backend/rag.py",
-    "backend/search.py",
-    "backend/data_loader.py",
-    "backend/rate_limit.py",
-    "backend/logging_middleware.py",
-    "backend/question_classifier.py",
-    "backend/query_expander.py",
-    "backend/relation_extractor.py",
-    "backend/requirements.txt",
+    "app/main.py",
+    "app/rag.py",
+    "app/search.py",
+    "app/data_loader.py",
+    "app/rate_limit.py",
+    "app/logging_middleware.py",
+    "app/question_classifier.py",
+    "app/query_expander.py",
+    "app/relation_extractor.py",
+    "app/requirements.txt",
     "scripts/backup_index.py",
     "scripts/checkpoint_save.py",
     "scripts/checkpoint_restore.py",
