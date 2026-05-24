@@ -27,9 +27,21 @@ jobs:
       - name: Install dependencies
         run: |
           pip install huggingface_hub faiss-cpu numpy
-      - name: Download chunks.db from HF backup
+      - name: Download chunks.db from main dataset
         run: |
-          python3 scripts/backup_index.py || echo "Backup download skipped"
+          python3 -c "
+          from huggingface_hub import hf_hub_download
+          import os, shutil
+          os.makedirs('data', exist_ok=True)
+          path = hf_hub_download(
+              repo_id='NedAktovOps/eurlex-chat-data',
+              filename='chunks.db',
+              repo_type='dataset',
+              token=os.environ.get('HF_TOKEN'),
+          )
+          shutil.copy(path, 'data/chunks.db')
+          print('Downloaded chunks.db')
+          "
       - name: Export chunks to JSON
         run: |
           python3 -c "
@@ -41,11 +53,13 @@ jobs:
               json.dump(chunks, f)
           print(f'Exported {len(chunks)} chunks to data/chunks.json')
           "
-      - name: Upload chunks.json
+      - name: Upload chunks data
         uses: actions/upload-artifact@v4
         with:
-          name: chunks-json
-          path: data/chunks.json
+          name: chunks-data
+          path: |
+            data/chunks.json
+            data/chunks.db
           retention-days: 1
 
   embed:
@@ -83,10 +97,10 @@ jobs:
           "
         env:
           MODEL_PATH: ${{ inputs.embedding_model || 'onnx_models/eurlex-bert/model.quant.onnx' }}
-      - name: Download chunks
+      - name: Download chunks data
         uses: actions/download-artifact@v4
         with:
-          name: chunks-json
+          name: chunks-data
           path: data/
       - name: Generate embeddings for shard ${{ matrix.shard }}
         run: |
@@ -179,7 +193,11 @@ jobs:
               json.dump(meta, f)
           print(f'Build metadata saved')
           "
-      - name: Upload FAISS index to HF dataset
+      - name: Prepare chunks_eurlex.db
+        run: |
+          cp data/chunks.db data/chunks_eurlex.db
+          echo "Created chunks_eurlex.db"
+      - name: Upload FAISS index and chunks to HF dataset
         run: |
           python3 -c "
           from huggingface_hub import HfApi
@@ -192,10 +210,10 @@ jobs:
               repo_type='dataset',
           )
           api.upload_file(
-              path_or_fileobj='data/build_meta.json',
-              path_in_repo='build_meta_eurlex.json',
+              path_or_fileobj='data/chunks_eurlex.db',
+              path_in_repo='chunks_eurlex.db',
               repo_id=os.environ['MODEL_REPO'],
               repo_type='dataset',
           )
-          print('✓ Index uploaded to HF dataset')
+          print('✓ Index and chunks uploaded')
           "
