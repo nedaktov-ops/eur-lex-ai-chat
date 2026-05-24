@@ -1,0 +1,36 @@
+# Git
+.git/
+.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Data (too large, download at runtime)
+chunks.db
+data/
+embeddings/
+hfspace_data/
+models/
+
+# Tests
+tests/
+
+# Docs
+docs/
+
+# CI
+.github/
+
+# Config
+.env
+*.env
+
+# Old code (not needed in Docker image)
+backend/
+hfspace/
+render.yaml
