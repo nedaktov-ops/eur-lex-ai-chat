@@ -2,13 +2,20 @@
 
 import logging
 import os
-
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from .logging_middleware import PipelineLoggingMiddleware, log_query_received, log_query_processed, log_search_performed, log_prompt_built, log_llm_call, log_answer_generated, log_response_returned
 from fastapi.responses import JSONResponse
+
+from .logging_middleware import (
+    PipelineLoggingMiddleware,
+    log_answer_generated,
+    log_query_processed,
+    log_query_received,
+    log_response_returned,
+    log_search_performed,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -89,7 +96,7 @@ async def health():
 
 @app.get("/refresh")
 async def refresh():
-    from .data_loader import check_for_updates, reload_index, get_stats
+    from .data_loader import check_for_updates, reload_index
 
     try:
         has_updates = check_for_updates()
@@ -98,7 +105,6 @@ async def refresh():
             reload_index()
             return {"status": "reloaded", "message": "Index updated successfully"}
         else:
-            stats = get_stats()
             return {"status": "current", "message": "Index is up to date"}
     except Exception as e:
         logger.error(f"Refresh failed: {e}")
@@ -138,13 +144,12 @@ async def chat(request: Request):
     import json
     import time
 
+    from .answer_validator import AnswerValidator, estimate_confidence
+    from .query_expander import AutoExpander, expand_obligation_query, expand_query
+    from .question_classifier import EUQuestionClassifier
+    from .rag import answer_question
     from .rate_limit import is_rate_limited
     from .search import search_discourse_aware
-    from .rag import answer_question
-    from .question_classifier import EUQuestionClassifier
-    from .query_expander import expand_obligation_query, expand_query
-    from .answer_validator import AnswerValidator, estimate_confidence
-    from .query_expander import AutoExpander
 
     client_ip = request.client.host if request.client else "unknown"
 

@@ -1,6 +1,6 @@
 """Tests for query expansion with legal synonyms."""
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from query_expander import expand_query, expand_obligation_query, AutoExpander
 

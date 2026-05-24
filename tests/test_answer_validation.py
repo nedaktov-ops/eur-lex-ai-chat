@@ -1,6 +1,6 @@
 """Tests for answer validation."""
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from answer_validator import AnswerValidator, estimate_confidence
 

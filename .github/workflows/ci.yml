@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt
+          pip install beautifulsoup4>=4.12 ruff
+
+      - name: Lint
+        run: ruff check app/ scripts/
+
+      - name: Test
+        run: python3 -m pytest tests/ -v --timeout=60 -k "not build_index"

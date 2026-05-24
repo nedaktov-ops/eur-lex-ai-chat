@@ -5,10 +5,9 @@ This is essential because the FAISS index is built from legal text, not conversa
 """
 
 import re
-from typing import Dict, List, Optional
 
 # Core term mappings (built from Legal-BERT vocabulary analysis)
-LEGAL_SYNONYMS: Dict[str, List[str]] = {
+LEGAL_SYNONYMS: dict[str, list[str]] = {
     # Employer-related
     "employer": ["undertaking", "company", "organization", "legal person", "economic operator"],
     "company": ["undertaking", "organization", "enterprise", "legal person", "economic operator"],
@@ -55,7 +54,7 @@ LEGAL_SYNONYMS: Dict[str, List[str]] = {
 }
 
 
-def expand_query(query: str) -> List[str]:
+def expand_query(query: str) -> list[str]:
     """Expand a plain-language query with legal synonyms.
 
     Returns a list of query variations to improve search recall.
@@ -92,7 +91,7 @@ def expand_query(query: str) -> List[str]:
     return _deduplicate(variations)
 
 
-def expand_obligation_query(query: str) -> List[str]:
+def expand_obligation_query(query: str) -> list[str]:
     """Specifically expand queries about legal obligations/responsibilities.
 
     Uses surgical replacement of obligation patterns to generate queries
@@ -153,7 +152,6 @@ def expand_obligation_query(query: str) -> List[str]:
     m = re.search(actor_verb_pattern, core_query)
     if m:
         actor = m.group(1)
-        verb = m.group(2)
         action = m.group(3)
         rest = m.group(4).strip()
 
@@ -188,7 +186,7 @@ def _replace_insensitive(text: str, old: str, new: str) -> str:
     return pattern.sub(new, text, count=1)
 
 
-def _deduplicate(items: List[str]) -> List[str]:
+def _deduplicate(items: list[str]) -> list[str]:
     """Remove duplicates while preserving order."""
     seen = set()
     result = []
@@ -210,17 +208,19 @@ class AutoExpander:
     EXPANSION_FILE = "data/auto_expansions.json"
 
     def __init__(self):
-        self.expansions: Dict[str, List[str]] = {}
+        self.expansions: dict[str, list[str]] = {}
         self._load()
 
     def _load(self):
-        import json, os
+        import json
+        import os
         if os.path.exists(self.EXPANSION_FILE):
             with open(self.EXPANSION_FILE) as f:
                 self.expansions = json.load(f)
 
     def _save(self):
-        import json, os
+        import json
+        import os
         os.makedirs(os.path.dirname(self.EXPANSION_FILE) or ".", exist_ok=True)
         with open(self.EXPANSION_FILE, "w") as f:
             json.dump(self.expansions, f, indent=2)
@@ -234,6 +234,6 @@ class AutoExpander:
                 self.expansions[w] = []
         self._save()
 
-    def get_auto_expansions(self) -> Dict[str, List[str]]:
+    def get_auto_expansions(self) -> dict[str, list[str]]:
         """Get auto-learned expansions (merged with LEGAL_SYNONYMS at query time)."""
         return dict(self.expansions)

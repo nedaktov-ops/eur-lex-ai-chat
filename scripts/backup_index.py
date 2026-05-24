@@ -90,7 +90,7 @@ def create_backup(date_prefix: str = None) -> str:
         meta_path = os.path.join(backup_dir, "backup_meta.json")
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
-        print(f"  ✓ backup_meta.json")
+        print("  ✓ backup_meta.json")
 
         # Upload to HuggingFace Hub
         print(f"\nUploading to {BACKUP_DATASET}@{branch} ...")

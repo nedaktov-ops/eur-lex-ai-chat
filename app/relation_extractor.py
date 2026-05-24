@@ -9,7 +9,6 @@ Identifies:
 """
 
 import re
-from typing import Dict, List
 
 OBLIGATION_PATTERNS = [
     (r"(shall|must)\s+(ensure|take|establish|implement|provide|report|disclose|notify|adopt|designate|maintain)", "positive_obligation"),
@@ -67,7 +66,7 @@ DEONTIC_PATTERNS = {
 }
 
 
-def extract_legal_relations(text: str) -> Dict:
+def extract_legal_relations(text: str) -> dict:
     """Extract legal relations from text chunks.
 
     Args:
@@ -129,7 +128,7 @@ def count_deontic_density(text: str) -> int:
     return sum(text_lower.count(kw) for kw in DEONTIC_PATTERNS)
 
 
-def summarize_relations(relations: Dict) -> str:
+def summarize_relations(relations: dict) -> str:
     """Create a human-readable summary of legal relations for prompt injection.
 
     Args:

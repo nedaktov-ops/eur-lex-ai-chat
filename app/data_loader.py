@@ -2,13 +2,14 @@
 
 import logging
 import os
+import shutil
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import faiss
-from huggingface_hub import hf_hub_download
+from huggingface_hub import HfApi, hf_hub_download
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def download_index(index_suffix=""):
     _index_data["size"] = size
     _index_data["ntotal"] = index.ntotal
     _index_data["last_updated"] = _get_last_updated()
-    _index_data["loaded_at"] = datetime.now(timezone.utc).isoformat()
+    _index_data["loaded_at"] = datetime.now(UTC).isoformat()
 
     logger.info(f"Index loaded: {index.ntotal} vectors, {size} chunks")
     return _index_data
@@ -85,7 +86,7 @@ def _get_last_updated():
             repo_type="dataset",
             token=HF_TOKEN,
         )
-        with open(ts_path, "r") as f:
+        with open(ts_path) as f:
             return f.read().strip()
     except Exception:
         return None
@@ -101,37 +102,37 @@ def check_for_updates():
 
 def create_backup():
     """Create a local backup of current index data before refreshing.
-    
+
     Copies current data files to a timestamped backup directory.
     If HF_TOKEN is set, also uploads to HuggingFace Hub backup dataset.
-    
+
     Returns:
         Path to the backup directory, or None if backup failed.
     """
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     backup_dir = DATA_DIR / f"backup-{timestamp}"
-    
+
     try:
         os.makedirs(backup_dir, exist_ok=True)
-        
+
         copied = []
         for f in BACKUP_FILES:
             src = DATA_DIR / f
             if src.exists():
                 shutil.copy2(src, backup_dir / f)
                 copied.append(f)
-        
+
         if not copied:
             logger.warning("No data files found to backup")
             shutil.rmtree(backup_dir, ignore_errors=True)
             return None
-        
+
         logger.info(f"Local backup created at {backup_dir}: {', '.join(copied)}")
-        
+
         # Attempt to upload to HuggingFace Hub if token is available
         if HF_TOKEN:
             try:
-                branch = f"backup-{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+                branch = f"backup-{datetime.now(UTC).strftime('%Y%m%d')}"
                 api = HfApi(token=HF_TOKEN)
                 api.upload_folder(
                     folder_path=str(backup_dir),
@@ -143,9 +144,9 @@ def create_backup():
                 logger.info(f"Remote backup saved to {BACKUP_DATASET}@{branch}")
             except Exception as e:
                 logger.warning(f"Remote backup failed (local backup still exists): {e}")
-        
+
         return backup_dir
-    
+
     except Exception as e:
         logger.error(f"Backup failed: {e}")
         # Clean up partial backup

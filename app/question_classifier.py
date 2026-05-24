@@ -8,7 +8,6 @@ Classifies queries by:
 """
 
 import re
-from typing import Dict, List, Optional
 
 
 class EUQuestionClassifier:
@@ -78,7 +77,7 @@ class EUQuestionClassifier:
     def __init__(self):
         self._classifier = None
 
-    def _detect_sentence_type(self, query: str) -> Dict:
+    def _detect_sentence_type(self, query: str) -> dict:
         """Detect whether the query is a question, command, request, or statement."""
         query_stripped = query.strip()
 
@@ -190,7 +189,7 @@ class EUQuestionClassifier:
 
         return "entity"
 
-    def _extract_legal_actors(self, query: str) -> List[str]:
+    def _extract_legal_actors(self, query: str) -> list[str]:
         """Extract legal actors (parties with obligations/rights) from the query."""
         found = []
         query_lower = query.lower()
@@ -204,7 +203,7 @@ class EUQuestionClassifier:
 
         return found
 
-    def _estimate_confidence(self, query: str, result: Dict) -> float:
+    def _estimate_confidence(self, query: str, result: dict) -> float:
         """Estimate confidence in the classification (0.0 to 1.0)."""
         score = 0.5  # Base confidence
 
@@ -230,7 +229,7 @@ class EUQuestionClassifier:
 
         return min(score, 1.0)
 
-    def classify(self, query: str) -> Dict:
+    def classify(self, query: str) -> dict:
         """Classify query into question type, legal intent, and extracted actors.
 
         Args:
@@ -268,7 +267,7 @@ class EUQuestionClassifier:
 
         return result
 
-    def needs_clarification(self, classification: Dict) -> bool:
+    def needs_clarification(self, classification: dict) -> bool:
         """Determine if the system should ask for clarification."""
         # If query is not a question and no clear legal intent
         if not classification.get("is_question") and classification.get("legal_intent") == "entity":
@@ -280,7 +279,7 @@ class EUQuestionClassifier:
                 return True
         return False
 
-    def should_answer(self, classification: Dict, search_results: List[dict],
+    def should_answer(self, classification: dict, search_results: list[dict],
                       min_confidence: float = 0.3) -> tuple:
         """Determine if we have sufficient confidence to answer.
 

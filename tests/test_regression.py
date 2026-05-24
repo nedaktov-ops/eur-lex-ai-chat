@@ -1,6 +1,6 @@
 """Regression tests — verify previously working queries still pass."""
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from question_classifier import EUQuestionClassifier
 from query_expander import expand_obligation_query, expand_query

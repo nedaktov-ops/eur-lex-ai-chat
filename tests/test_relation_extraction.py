@@ -1,6 +1,6 @@
 """Tests for legal relation extraction."""
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from relation_extractor import extract_legal_relations, summarize_relations
 

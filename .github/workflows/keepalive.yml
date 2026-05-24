@@ -9,4 +9,37 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - run: curl -sSf -o /dev/null "https://nedaktovops-eurlex-chat-api.hf.space/health"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Ping health endpoint
+        id: ping
+        continue-on-error: false
+        run: |
+          set -e
+          RESPONSE=$(curl -sSf --max-time 30 -w "\n%{http_code}" \
+            "https://nedaktovops-eurlex-chat-api.hf.space/health" 2>&1) || true
+          HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          echo "http_code=$HTTP_CODE" >> $GITHUB_OUTPUT
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" | head -c 200 >> $GITHUB_OUTPUT
+          echo ""
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "HTTP $HTTP_CODE"
+          echo "Response: $(echo "$BODY" | head -c 200)"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "ERROR: Keepalive failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Summarize result
+        if: always()
+        run: |
+          CODE="${{ steps.ping.outputs.http_code }}"
+          if [ "$CODE" = "200" ]; then
+            echo "✅ Keepalive success (HTTP 200)"
+          else
+            echo "❌ Keepalive failed with HTTP $CODE"
+            echo "Check: https://huggingface.co/spaces/nedaktovops/eurlex-chat-api"
+          fi

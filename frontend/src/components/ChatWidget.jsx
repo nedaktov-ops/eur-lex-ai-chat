@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 
-const API_URL = "https://nedaktovops-eurlex-chat-api.hf.space";
+const API_URL = import.meta.env.VITE_API_URL || "https://nedaktovops-eurlex-chat-api.hf.space";
 
 const CONFIDENCE_COLORS = {
   high: { bg: "bg-green-100", text: "text-green-800", label: "High confidence" },

@@ -1,6 +1,6 @@
 """Tests for the EU law question classifier."""
 import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 
 from question_classifier import EUQuestionClassifier
 

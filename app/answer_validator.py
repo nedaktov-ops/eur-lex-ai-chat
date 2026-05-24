@@ -7,7 +7,6 @@ Provides:
 """
 
 import re
-from typing import Dict, List, Tuple
 
 
 class AnswerValidator:
@@ -31,8 +30,8 @@ class AnswerValidator:
         "be", "been", "being", "have", "has", "had", "not", "no", "but",
     }
 
-    def validate(self, query: str, answer: str, chunks: List[Dict],
-                 classification: Dict = None) -> Tuple[bool, str]:
+    def validate(self, query: str, answer: str, chunks: list[dict],
+                 classification: dict = None) -> tuple[bool, str]:
         """Validate answer quality. Returns (passes, reason)."""
         checks = []
 
@@ -71,8 +70,8 @@ class AnswerValidator:
 
         return True, "; ".join(checks)
 
-    def make_fallback_answer(self, query: str, chunks: List[Dict],
-                             classification: Dict = None,
+    def make_fallback_answer(self, query: str, chunks: list[dict],
+                             classification: dict = None,
                              validation_reason: str = "") -> str:
         """Generate an informative fallback when validation fails."""
         celex_list = list(dict.fromkeys(c.get("celex") for c in chunks if c.get("celex")))
@@ -104,7 +103,7 @@ class AnswerValidator:
                 fallback_parts.append(f"- {title} (CELEX: {celex})")
 
             fallback_parts.append(
-                f"\nTry asking a more specific question about one of these documents."
+                "\nTry asking a more specific question about one of these documents."
             )
 
         if classification and classification.get("obligation_seeking"):
@@ -116,7 +115,7 @@ class AnswerValidator:
         return "\n".join(fallback_parts)
 
 
-def estimate_confidence(chunks: List[Dict], classification: Dict = None) -> Dict:
+def estimate_confidence(chunks: list[dict], classification: dict = None) -> dict:
     """Estimate confidence level for the generated answer.
 
     Returns a dict with:
@@ -171,7 +170,7 @@ def estimate_confidence(chunks: List[Dict], classification: Dict = None) -> Dict
     return {"level": level, "overall_score": round(overall, 3), "factors": factors}
 
 
-def get_response_prefix(confidence: Dict) -> str:
+def get_response_prefix(confidence: dict) -> str:
     """Get appropriate hedging prefix based on confidence level."""
     if confidence["level"] == "high":
         return "Based on the retrieved EU law documents, "

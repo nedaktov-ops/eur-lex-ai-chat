@@ -4,8 +4,8 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -25,21 +25,21 @@ if not logger.handlers:
 
 class PipelineLoggingMiddleware(BaseHTTPMiddleware):
     """Middleware to log all stages of the RAG pipeline with structured JSON."""
-    
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Generate unique request ID
         request_id = str(uuid.uuid4())
         start_time = time.time()
-        
+
         # Add request ID to request state
         request.state.request_id = request_id
-        
+
         # Process request
         response = await call_next(request)
-        
+
         # Calculate duration
         duration_ms = (time.time() - start_time) * 1000
-        
+
         # Log request/response metadata (basic)
         log_entry = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -50,15 +50,15 @@ class PipelineLoggingMiddleware(BaseHTTPMiddleware):
             "duration_ms": round(duration_ms, 2),
             "client_host": request.client.host if request.client else None,
         }
-        
+
         logger.info(json.dumps(log_entry))
-        
+
         return response
 
 
 def log_pipeline_stage(stage: str, request_id: str, data: dict, level: str = "INFO"):
     """Log a structured pipeline stage event.
-    
+
     Args:
         stage: Name of the pipeline stage (e.g., "query_received", "search_performed")
         request_id: Unique request identifier
@@ -71,7 +71,7 @@ def log_pipeline_stage(stage: str, request_id: str, data: dict, level: str = "IN
         "stage": stage,
         "data": data,
     }
-    
+
     log_json = json.dumps(log_entry)
     log_level = getattr(logging, level.upper(), logging.INFO)
     logger.log(log_level, log_json)
@@ -102,7 +102,7 @@ def log_query_processed(request_id: str, classification: dict = None, expanded_q
     )
 
 
-def log_search_performed(request_id: str, query_vector_shape: tuple, results_count: int, 
+def log_search_performed(request_id: str, query_vector_shape: tuple, results_count: int,
                         top_scores: list, search_duration_ms: float):
     log_pipeline_stage(
         "search_performed",
@@ -129,7 +129,7 @@ def log_prompt_built(request_id: str, prompt_length: int, context_chunks_count: 
     )
 
 
-def log_llm_call(request_id: str, model_name: str, prompt_tokens: int = None, 
+def log_llm_call(request_id: str, model_name: str, prompt_tokens: int = None,
                 completion_tokens: int = None, duration_ms: float = None):
     log_pipeline_stage(
         "llm_call",
@@ -144,7 +144,7 @@ def log_llm_call(request_id: str, model_name: str, prompt_tokens: int = None,
     )
 
 
-def log_answer_generated(request_id: str, answer_length: int, citations_count: int, 
+def log_answer_generated(request_id: str, answer_length: int, citations_count: int,
                         sources_count: int, validation_passed: bool = None,
                         confidence: dict = None):
     data = {
@@ -159,7 +159,7 @@ def log_answer_generated(request_id: str, answer_length: int, citations_count: i
     log_pipeline_stage("answer_generated", request_id, data)
 
 
-def log_response_returned(request_id: str, status_code: int, response_size: int, 
+def log_response_returned(request_id: str, status_code: int, response_size: int,
                          fallback_used: bool = False):
     log_pipeline_stage(
         "response_returned",

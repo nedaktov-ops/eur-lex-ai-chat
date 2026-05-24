@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 import numpy as np
@@ -321,8 +321,8 @@ def embed_chunks(all_chunks, batch_size=None):
         batch_size = 64 if _IS_EURLEX else 1024
     if _IS_EURLEX:
         logger.info(f"Loading EURLEX-BERT model: {EMBEDDING_MODEL} (768-dim)")
-        from transformers import AutoTokenizer, AutoModel
         import torch
+        from transformers import AutoModel, AutoTokenizer
         tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
         model = AutoModel.from_pretrained(EMBEDDING_MODEL)
         model.eval()
@@ -467,7 +467,7 @@ def upload_to_hub(index_path, db_path, dataset_name, token, success_count=0, chu
         logger.warning(f"Repo creation warning (may already exist): {e}")
 
     ts_path = os.path.join(DATA_DIR, "last_updated.txt")
-    ts = datetime.now(timezone.utc).isoformat()
+    ts = datetime.now(UTC).isoformat()
     build_meta = {
         "timestamp": ts,
         "git_rev": GIT_REV,
@@ -551,8 +551,10 @@ def load_chunks_from_backup(token):
     Returns list of chunk dicts with keys: celex, title, article, type, text.
     Returns empty list if no backup found.
     """
+    import shutil
+    import tempfile
+
     from huggingface_hub import HfApi
-    import tempfile, shutil
 
     api = HfApi(token=token)
     try:
@@ -588,9 +590,9 @@ def _download_and_chunk(docs):
     all_chunks = []
     success_count = 0
     with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as executor:
-        BATCH_SIZE = DOWNLOAD_WORKERS * 3  # 60
-        for batch_start in range(0, len(docs), BATCH_SIZE):
-            batch = docs[batch_start:batch_start + BATCH_SIZE]
+        batch_size = DOWNLOAD_WORKERS * 3  # 60
+        for batch_start in range(0, len(docs), batch_size):
+            batch = docs[batch_start:batch_start + batch_size]
             future_map = {
                 executor.submit(fetch_document_xhtml, doc): doc for doc in batch
             }
@@ -732,8 +734,8 @@ def _build_from_chunks(all_chunks, success_count, hf_token, total_start):
     logger.info(f"  Chunks:        {chunk_count}")
     logger.info(f"  Dimensions:    {dim}")
     logger.info(f"  Dataset:       {repo_id}")
-    logger.info(f"  Index:         data/index.faiss")
-    logger.info(f"  Database:      data/chunks.db")
+    logger.info("  Index:         data/index.faiss")
+    logger.info("  Database:      data/chunks.db")
     logger.info("=" * 60)
 
 

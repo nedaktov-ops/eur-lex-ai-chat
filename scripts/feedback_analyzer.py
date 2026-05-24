@@ -12,9 +12,7 @@ Usage:
 """
 import json
 import sys
-import os
-from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from collections import Counter
 
 
 def parse_logs(lines):
@@ -136,13 +134,13 @@ def generate_insights(stats):
     insights.append(f"📎 Avg citations per answer: {stats['avg_citations']:.1f}")
 
     if stats["intent_breakdown"]:
-        insights.append(f"\n📋 Query intent breakdown:")
+        insights.append("\n📋 Query intent breakdown:")
         for intent, count in stats["intent_breakdown"].most_common():
             pct = count / total * 100
             insights.append(f"  {intent}: {count} ({pct:.0f}%)")
 
     if stats["confidence_breakdown"]:
-        insights.append(f"\n📈 Confidence distribution:")
+        insights.append("\n📈 Confidence distribution:")
         total_conf = sum(stats["confidence_breakdown"].values())
         for level, count in stats["confidence_breakdown"].most_common():
             pct = count / total_conf * 100

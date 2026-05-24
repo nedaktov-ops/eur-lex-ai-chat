@@ -130,7 +130,7 @@ def restore_checkpoint(checkpoint_id: str, dry_run: bool = False):
             restored.append(rel_path)
             continue
 
-        # Make backup of current file before overwriting? 
+        # Make backup of current file before overwriting?
         # No — this is a restore, the checkpoint is the reference.
         # If user wants to keep current state, they should have saved a checkpoint first.
         os.makedirs(dst.parent, exist_ok=True)

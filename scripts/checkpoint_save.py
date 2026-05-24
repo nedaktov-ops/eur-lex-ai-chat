@@ -19,7 +19,7 @@ import json
 import os
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -65,7 +65,7 @@ def save_checkpoint(phase: str, message: str = "", extra_files: list = None) -> 
     Returns:
         Checkpoint ID string.
     """
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     checkpoint_id = f"ckpt-{timestamp}"
     checkpoint_path = CHECKPOINT_DIR / checkpoint_id
 
@@ -108,7 +108,7 @@ def save_checkpoint(phase: str, message: str = "", extra_files: list = None) -> 
     meta = {
         "checkpoint_id": checkpoint_id,
         "phase": phase,
-        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         "message": message,
         "files_backed_up": backed_up,
         "files_missing": missing,
@@ -200,7 +200,7 @@ def show_checkpoint(checkpoint_id: str):
         size = os.path.getsize(ckpt_path / f) if (ckpt_path / f).exists() else 0
         print(f"    {status} {f} ({size} bytes, hash: {hash_val}...)")
     if meta.get("files_missing"):
-        print(f"  Missing (at save time):")
+        print("  Missing (at save time):")
         for f in meta["files_missing"]:
             print(f"    • {f}")
     print(f"\n  Rollback: {meta['rollback_command']}")
