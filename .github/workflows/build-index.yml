@@ -142,6 +142,11 @@ jobs:
           done
         env:
           GH_TOKEN: ${{ github.token }}
+      - name: Download chunks data
+        uses: actions/download-artifact@v4
+        with:
+          name: chunks-data
+          path: data/
       - name: Merge shards and build FAISS index
         run: |
           python3 -c "
