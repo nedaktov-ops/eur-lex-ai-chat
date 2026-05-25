@@ -134,8 +134,8 @@ def estimate_confidence(chunks: list[dict], classification: dict = None) -> dict
     factors["relevance_score"] = max(0.0, min(1.0, 1.0 - avg_score))
 
     # Factor 2: Operative articles vs recitals
-    article_count = sum(1 for c in chunks if c.get("article", "").startswith("art_"))
-    recital_count = sum(1 for c in chunks if c.get("article", "").startswith("rct_"))
+    article_count = sum(1 for c in chunks if (c.get("article") or "").startswith("art_"))
+    recital_count = sum(1 for c in chunks if (c.get("article") or "").startswith("rct_"))
     total = article_count + recital_count
     factors["operative_ratio"] = article_count / total if total > 0 else 0.5
 
