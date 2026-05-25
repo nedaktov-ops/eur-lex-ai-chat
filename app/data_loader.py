@@ -77,7 +77,7 @@ class EURLEXEmbedder:
         )
         logger.info(f"EURLEXEmbedder loaded: {self.model_name} ({self._dim}-dim, model={model_path})")
 
-    def encode(self, texts: list[str], batch_size: int = 32) -> list:
+    def encode(self, texts: list[str], batch_size: int = 32, **kwargs) -> list:
         """Encode texts to 768-dim embeddings.
 
         Args:
