@@ -223,5 +223,11 @@ jobs:
               repo_id=os.environ['MODEL_REPO'],
               repo_type='dataset',
           )
+          api.upload_file(
+              path_or_fileobj='data/build_meta.json',
+              path_in_repo='build_meta_eurlex.json',
+              repo_id=os.environ['MODEL_REPO'],
+              repo_type='dataset',
+          )
           print('✓ Index and chunks uploaded')
           "
