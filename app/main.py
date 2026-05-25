@@ -94,31 +94,6 @@ async def health():
         "loaded_at": stats["loaded_at"],
     }
 
-
-@app.get("/diag")
-async def diag():
-    from .data_loader import get_index, download_index, EURLEXEmbedder
-    import traceback, os
-    d = {}
-    try:
-        idx = get_index()
-        d["index"] = {
-            "ntotal": idx["ntotal"],
-            "size": idx["size"],
-            "suffix": os.environ.get("INDEX_SUFFIX", ""),
-            "loaded_at": idx["loaded_at"],
-        }
-    except Exception as e:
-        d["index"] = f"ERROR: {e}"
-    try:
-        em = EURLEXEmbedder()
-        em._load()
-        d["embedder"] = "loaded"
-    except Exception as e:
-        d["embedder"] = f"ERROR: {traceback.format_exc()}"
-    return d
-
-
 @app.get("/refresh")
 async def refresh():
     from .data_loader import check_for_updates, reload_index
