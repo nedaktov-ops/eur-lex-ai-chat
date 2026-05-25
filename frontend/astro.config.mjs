@@ -4,7 +4,7 @@ import sitemap from "@astrojs/sitemap";
 import tailwindcss from "@tailwindcss/vite";
 
 export default defineConfig({
-  site: "https://eurlex-chat.vercel.app",
+  site: "https://frontend-ruddy-zeta-40.vercel.app",
   integrations: [
     react(),
     sitemap({
