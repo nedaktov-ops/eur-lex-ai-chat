@@ -248,7 +248,7 @@ async def chat(request: Request):
     chunks = all_chunks[:10]
 
     top_scores = [c.get("score", 0) for c in chunks[:3]] if chunks else []
-    query_vector_shape = (1, 384)
+    query_vector_shape = (1, query_vector.shape[-1]) if hasattr(query_vector, "shape") else (1, 0)
     log_search_performed(
         request_id, query_vector_shape, len(chunks), top_scores, search_duration_ms,
     )

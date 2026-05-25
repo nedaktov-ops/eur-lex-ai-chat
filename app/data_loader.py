@@ -77,7 +77,7 @@ class EURLEXEmbedder:
         )
         logger.info(f"EURLEXEmbedder loaded: {self.model_name} ({self._dim}-dim, model={model_path})")
 
-    def encode(self, texts: list[str], batch_size: int = 32, **kwargs) -> list:
+    def encode(self, texts: list[str], batch_size: int = 32, **kwargs) -> np.ndarray:
         """Encode texts to 768-dim embeddings.
 
         Args:
@@ -85,7 +85,7 @@ class EURLEXEmbedder:
             batch_size: Inference batch size (default 32)
 
         Returns:
-            List of embedding vectors (list of lists)
+            Numpy array of embeddings, shape (len(texts), 768)
         """
         self._load()
 
@@ -117,7 +117,7 @@ class EURLEXEmbedder:
 
             all_embeddings.append(embeddings)
 
-        return np.vstack(all_embeddings).tolist()
+        return np.vstack(all_embeddings).astype(np.float32)
 
 
 def download_index(index_suffix=""):
