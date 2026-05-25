@@ -1,0 +1,108 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0
+rootdir: /home/nedaktov/Desktop/EUProjects/eur-lex-ai-chat
+configfile: pyproject.toml
+plugins: timeout-2.4.0, anyio-4.13.0
+collected 57 items
+
+tests/test_answer_validation.py ...F..                                   [ 10%]
+tests/test_build_index.py ..FFFFF.....FFFF..s.sssss                      [ 54%]
+tests/test_discourse_scoring.py .....                                    [ 63%]
+tests/test_query_expansion.py .....                                      [ 71%]
+tests/test_question_classifier.py .....                                  [ 80%]
+tests/test_regression.py ......                                          [ 91%]
+tests/test_relation_extraction.py .....                                  [100%]
+
+=================================== FAILURES ===================================
+_______________________ test_insufficient_citation_fails _______________________
+tests/test_answer_validation.py:51: in test_insufficient_citation_fails
+    assert not passes
+E   assert not True
+________________________ test_parse_eli_structured_html ________________________
+tests/test_build_index.py:109: in test_parse_eli_structured_html
+    chunks = parse_html_to_chunks(SAMPLE_XHTML, "32024L1234", "Directive on Test Matters")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:213: in parse_html_to_chunks
+    from bs4 import BeautifulSoup
+E   ModuleNotFoundError: No module named 'bs4'
+_______________ test_parse_html_extracts_title_when_not_provided _______________
+tests/test_build_index.py:122: in test_parse_html_extracts_title_when_not_provided
+    chunks = parse_html_to_chunks(SAMPLE_XHTML, "32024L1234", "")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:213: in parse_html_to_chunks
+    from bs4 import BeautifulSoup
+E   ModuleNotFoundError: No module named 'bs4'
+_____________________ test_parse_corrigendum_fallback_view _____________________
+tests/test_build_index.py:129: in test_parse_corrigendum_fallback_view
+    chunks = parse_html_to_chunks(SAMPLE_CORRIGENDUM_XHTML, "32024L1234R(01)", "Corrigendum")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:213: in parse_html_to_chunks
+    from bs4 import BeautifulSoup
+E   ModuleNotFoundError: No module named 'bs4'
+____________________________ test_parse_empty_html _____________________________
+tests/test_build_index.py:136: in test_parse_empty_html
+    result = parse_html_to_chunks("<html><body></body></html>", "32024L9999", "Empty")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:213: in parse_html_to_chunks
+    from bs4 import BeautifulSoup
+E   ModuleNotFoundError: No module named 'bs4'
+_______________________ test_parse_html_no_eli_container _______________________
+tests/test_build_index.py:143: in test_parse_html_no_eli_container
+    chunks = parse_html_to_chunks(html, "32024L9999", "Test Doc")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:213: in parse_html_to_chunks
+    from bs4 import BeautifulSoup
+E   ModuleNotFoundError: No module named 'bs4'
+__________________________ test_build_chunks_db_basic __________________________
+tests/test_build_index.py:240: in test_build_chunks_db_basic
+    db_path = build_chunks_db(chunks_for_test)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:446: in build_chunks_db
+    conn.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?)", rows)
+E   sqlite3.IntegrityError: UNIQUE constraint failed: chunks.id
+_____________________ test_build_chunks_db_data_integrity ______________________
+tests/test_build_index.py:261: in test_build_chunks_db_data_integrity
+    db_path = build_chunks_db(chunks_for_test)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:446: in build_chunks_db
+    conn.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?)", rows)
+E   sqlite3.OperationalError: database is locked
+___________________________ test_embed_chunks_shape ____________________________
+tests/test_build_index.py:282: in test_embed_chunks_shape
+    vectors = embed_chunks(chunks_for_test, batch_size=2)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:351: in embed_chunks
+    embeddings = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
+                 ^^^^^
+E   UnboundLocalError: cannot access local variable 'model' where it is not associated with a value
+_________________________ test_embed_chunks_normalized _________________________
+tests/test_build_index.py:291: in test_embed_chunks_normalized
+    vectors = embed_chunks(chunks_for_test, batch_size=2)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+scripts/build_index.py:351: in embed_chunks
+    embeddings = model.encode(batch, show_progress_bar=False, normalize_embeddings=True)
+                 ^^^^^
+E   UnboundLocalError: cannot access local variable 'model' where it is not associated with a value
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_answer_validation.py::test_insufficient_citation_fails - as...
+FAILED tests/test_build_index.py::test_parse_eli_structured_html - ModuleNotF...
+FAILED tests/test_build_index.py::test_parse_html_extracts_title_when_not_provided
+FAILED tests/test_build_index.py::test_parse_corrigendum_fallback_view - Modu...
+FAILED tests/test_build_index.py::test_parse_empty_html - ModuleNotFoundError...
+FAILED tests/test_build_index.py::test_parse_html_no_eli_container - ModuleNo...
+FAILED tests/test_build_index.py::test_build_chunks_db_basic - sqlite3.Integr...
+FAILED tests/test_build_index.py::test_build_chunks_db_data_integrity - sqlit...
+FAILED tests/test_build_index.py::test_embed_chunks_shape - UnboundLocalError...
+FAILED tests/test_build_index.py::test_embed_chunks_normalized - UnboundLocal...
+======= 10 failed, 41 passed, 6 skipped, 3 warnings in 258.71s (0:04:18) =======
