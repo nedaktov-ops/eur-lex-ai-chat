@@ -78,25 +78,25 @@ jobs:
       - name: Install dependencies
         run: |
           pip install onnxruntime>=1.18.0 numpy>=1.24.0 transformers>=4.44.0 huggingface_hub
-      - name: Download ONNX model
+      - name: Download ONNX model from Space repo
         run: |
           python3 -c "
           from huggingface_hub import hf_hub_download
           import os
           os.makedirs('data/eurlex-bert-onnx', exist_ok=True)
-          hf_hub_download(
-              repo_id=os.environ['MODEL_REPO'],
-              filename=os.environ['MODEL_PATH'],
+          path = hf_hub_download(
+              repo_id='nedaktovops/eurlex-chat-api',
+              filename='onnx_models/eurlex-bert/model.quant.onnx',
+              repo_type='space',
               local_dir='data/eurlex-bert-onnx',
               local_dir_use_symlinks=False,
               token=os.environ.get('HF_TOKEN'),
           )
+          print(f'Downloaded to: {path}')
           import glob
           for f in glob.glob('data/eurlex-bert-onnx/**'):
               print(f)
           "
-        env:
-          MODEL_PATH: ${{ inputs.embedding_model || 'onnx_models/eurlex-bert/model.quant.onnx' }}
       - name: Download chunks data
         uses: actions/download-artifact@v4
         with:
