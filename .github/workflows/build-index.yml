@@ -103,6 +103,8 @@ jobs:
         with:
           name: chunks-data
           path: data/
+      - name: Create embeddings directory
+        run: mkdir -p data/embeddings
       - name: Generate embeddings for shard ${{ matrix.shard }}
         run: |
           python3 scripts/generate_embeddings.py \
