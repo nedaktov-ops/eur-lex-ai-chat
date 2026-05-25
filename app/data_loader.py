@@ -65,7 +65,8 @@ class EURLEXEmbedder:
             from huggingface_hub import hf_hub_download
             model_path = hf_hub_download(
                 repo_id="NedAktovOps/eurlex-chat-data",
-                filename="onnx_models/eurlex-bert/model.quant.onnx"
+                filename="onnx_models/eurlex-bert/model.quant.onnx",
+                repo_type="dataset",
             )
 
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
