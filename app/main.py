@@ -69,6 +69,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://eurlex-chat.vercel.app",
+        "https://frontend-ruddy-zeta-40.vercel.app",
         "http://localhost:4321",
         "http://localhost:3000",
     ],
