@@ -67,6 +67,7 @@ class EURLEXEmbedder:
                 repo_id="NedAktovOps/eurlex-chat-data",
                 filename="onnx_models/eurlex-bert/model.quant.onnx",
                 repo_type="dataset",
+                token=HF_TOKEN,
             )
 
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
