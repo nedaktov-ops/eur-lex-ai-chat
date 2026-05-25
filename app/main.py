@@ -94,34 +94,6 @@ async def health():
     }
 
 
-@app.get("/diagnose")
-async def diagnose():
-    results = {}
-    try:
-        import onnxruntime
-        results["onnxruntime"] = onnxruntime.__version__
-    except Exception as e:
-        results["onnxruntime"] = f"ERROR: {e}"
-    try:
-        import transformers
-        results["transformers"] = transformers.__version__
-    except Exception as e:
-        results["transformers"] = f"ERROR: {e}"
-    try:
-        from sentence_transformers import SentenceTransformer
-        results["sentence_transformers"] = SentenceTransformer.__module__
-    except Exception as e:
-        results["sentence_transformers"] = f"ERROR: {e}"
-    try:
-        from .data_loader import EURLEXEmbedder
-        embedder = EURLEXEmbedder()
-        embedder._load()
-        results["eurlex_bert"] = "loaded"
-    except Exception as e:
-        results["eurlex_bert"] = f"ERROR: {e}"
-    return results
-
-
 @app.get("/refresh")
 async def refresh():
     from .data_loader import check_for_updates, reload_index

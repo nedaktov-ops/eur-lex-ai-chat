@@ -128,13 +128,13 @@ def download_index(index_suffix=""):
     try:
         index_path = hf_hub_download(
             repo_id=REPO_ID,
-            filename="index.faiss",
+            filename=index_file,
             repo_type="dataset",
             token=HF_TOKEN,
         )
         db_path = hf_hub_download(
             repo_id=REPO_ID,
-            filename="chunks.db",
+            filename=db_file,
             repo_type="dataset",
             token=HF_TOKEN,
         )
