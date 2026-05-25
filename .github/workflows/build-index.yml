@@ -82,20 +82,21 @@ jobs:
         run: |
           python3 -c "
           from huggingface_hub import hf_hub_download
-          import os
-          os.makedirs('data/eurlex-bert-onnx', exist_ok=True)
+          import os, shutil
+          # Download to temp location
           path = hf_hub_download(
               repo_id='nedaktovops/eurlex-chat-api',
               filename='onnx_models/eurlex-bert/model.quant.onnx',
               repo_type='space',
-              local_dir='data/eurlex-bert-onnx',
+              local_dir='/tmp/onnx_download',
               local_dir_use_symlinks=False,
               token=os.environ.get('HF_TOKEN'),
           )
-          print(f'Downloaded to: {path}')
-          import glob
-          for f in glob.glob('data/eurlex-bert-onnx/**'):
-              print(f)
+          # Copy to expected location
+          os.makedirs('data/eurlex-bert-onnx', exist_ok=True)
+          shutil.copy(path, 'data/eurlex-bert-onnx/model.quant.onnx')
+          print(f'Downloaded to: data/eurlex-bert-onnx/model.quant.onnx')
+          print(f'File size: {os.path.getsize(\"data/eurlex-bert-onnx/model.quant.onnx\")} bytes')
           "
       - name: Download chunks data
         uses: actions/download-artifact@v4
