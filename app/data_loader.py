@@ -12,6 +12,8 @@ import faiss
 import numpy as np
 from huggingface_hub import HfApi, hf_hub_download
 
+from .bm25_store import BM25Store
+
 logger = logging.getLogger(__name__)
 
 HF_USERNAME = os.environ.get("HF_USERNAME", "NedAktovOps")
@@ -24,15 +26,64 @@ REPO_ID = f"{HF_USERNAME}/{HF_DATASET}"
 BACKUP_FILES = ["index.faiss", "chunks.db", "build_meta.json", "last_updated.txt"]
 DATA_DIR = Path(__file__).parent.parent / "data"
 
-_index_data = {
-    "index": None,
-    "conn": None,
-    "lock": threading.Lock(),
-    "size": 0,
-    "ntotal": 0,
-    "last_updated": None,
-    "loaded_at": None,
+# Mapping from model name to index suffix
+MODEL_SUFFIX_MAP = {
+    "minilm": "",
+    "eurlex-bert": "eurlex"
 }
+
+# Cache for index data by suffix
+_index_cache = {}
+
+# Cache for BM25 stores by suffix
+_bm25_store_cache = {}
+
+
+def _build_bm25_index(conn, store_path):
+    """Build BM25 index from all chunks in the database and save to disk."""
+    cursor = conn.execute("SELECT id, text FROM chunks")
+    rows = cursor.fetchall()
+    chunks_dict = {str(row["id"]): row["text"] for row in rows}
+    store = BM25Store()
+    store.build(chunks_dict)
+    store.save(str(store_path))
+    return store
+
+
+def get_bm25_store(model_name=None, suffix=None):
+    """Get BM25 store for a specific model or the default.
+
+    Args:
+        model_name: Model name ('minilm' or 'eurlex-bert').
+        suffix: Direct index suffix (overrides model_name if provided).
+    """
+    # Determine suffix
+    if suffix is None:
+        if model_name is not None:
+            suffix = MODEL_SUFFIX_MAP.get(model_name, "")
+        else:
+            suffix = os.environ.get("INDEX_SUFFIX", "")
+    if suffix in _bm25_store_cache:
+        return _bm25_store_cache[suffix]
+
+    store_path = DATA_DIR / f"bm25_store{suffix}.pkl"
+    if store_path.exists():
+        store = BM25Store()
+        store.load(str(store_path))
+        _bm25_store_cache[suffix] = store
+        logger.info(f"BM25 index loaded from {store_path}")
+        return store
+    else:
+        # Build on first run using the current database connection
+        # Ensure index for this suffix is loaded
+        index_data = get_index(suffix=suffix)
+        conn = index_data["conn"]
+        if conn is None:
+            raise RuntimeError("Cannot build BM25 index: database not initialized")
+        store = _build_bm25_index(conn, store_path)
+        _bm25_store_cache[suffix] = store
+        logger.info(f"BM25 index built and saved to {store_path}")
+        return store
 
 
 class EURLEXEmbedder:
@@ -151,17 +202,26 @@ def download_index(index_suffix=""):
 
     cursor = conn.execute("SELECT COUNT(*) AS cnt FROM chunks")
     size = cursor.fetchone()["cnt"]
+    lock = threading.Lock()
 
-    _index_data["index"] = index
-    _index_data["conn"] = conn
-    _index_data["lock"] = threading.Lock()
-    _index_data["size"] = size
-    _index_data["ntotal"] = index.ntotal
-    _index_data["last_updated"] = _get_last_updated()
-    _index_data["loaded_at"] = datetime.now(UTC).isoformat()
+    index_data = {
+        "index": index,
+        "conn": conn,
+        "lock": lock,
+        "size": size,
+        "ntotal": index.ntotal,
+        "last_updated": _get_last_updated(),
+        "loaded_at": datetime.now(UTC).isoformat(),
+    }
+    _index_cache[suffix] = index_data
 
     logger.info(f"Index loaded: {index.ntotal} vectors, {size} chunks")
-    return _index_data
+    # Load or build BM25 index for lexical retrieval
+    try:
+        get_bm25_store(suffix=suffix)
+    except Exception as e:
+        logger.warning(f"Failed to load/build BM25 index: {e}")
+    return index_data
 
 
 def _get_last_updated():
@@ -179,8 +239,9 @@ def _get_last_updated():
 
 
 def check_for_updates():
+    index_data = get_index()
     current_remote = _get_last_updated()
-    if current_remote and current_remote != _index_data["last_updated"]:
+    if current_remote and current_remote != index_data["last_updated"]:
         logger.info(f"Remote index updated: {current_remote}")
         return True
     return False
@@ -241,14 +302,38 @@ def create_backup():
 
 
 def reload_index():
-    conn = _index_data.get("conn")
-    if conn:
-        conn.close()
-    return download_index()
+    # Reload the default index (based on INDEX_SUFFIX env)
+    suffix = os.environ.get("INDEX_SUFFIX", "")
+    if suffix in _index_cache:
+        old_conn = _index_cache[suffix].get("conn")
+        if old_conn:
+            old_conn.close()
+        del _index_cache[suffix]
+        if suffix in _bm25_store_cache:
+            del _bm25_store_cache[suffix]
+    return download_index(index_suffix=suffix)
 
 
-def get_index():
-    return _index_data
+def get_index(model_name=None, suffix=None):
+    """Get index data for a specific model or the default.
+
+    Args:
+        model_name: Model name ('minilm' or 'eurlex-bert'). If provided, looks up by suffix.
+        suffix: Direct index suffix (overrides model_name if provided).
+
+    Returns:
+        Dict with keys: index, conn, lock, size, ntotal, last_updated, loaded_at.
+    """
+    if suffix is None:
+        if model_name is not None:
+            suffix = MODEL_SUFFIX_MAP.get(model_name)
+            if suffix is None:
+                raise ValueError(f"Unknown model_name: {model_name}")
+        else:
+            suffix = os.environ.get("INDEX_SUFFIX", "")
+    if suffix not in _index_cache:
+        download_index(index_suffix=suffix)
+    return _index_cache[suffix]
 
 
 def get_stats():

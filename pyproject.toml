@@ -1,3 +1,13 @@
+[project]
+name = "eur-lex-ai-chat"
+version = "0.1.0"
+dependencies = [
+    "eurlxp>=0.1.0",
+    "chunkweaver>=0.1.0",
+    "rank-bm25>=0.2.2",
+    "ragas>=0.2.0",
+]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 120

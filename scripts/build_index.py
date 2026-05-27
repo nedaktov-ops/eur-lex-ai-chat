@@ -52,6 +52,9 @@ from urllib.parse import quote
 import numpy as np
 import requests
 from tqdm import tqdm
+from eurlxp import get_html_by_celex_id, WAFChallengeError
+from chunkweaver import Chunker
+from chunkweaver.presets import LEGAL_EU
 
 try:
     import faiss
@@ -90,15 +93,15 @@ FAISS_INDEX_FACTORY = f"IVF{{nlist}},PQ{PQ_BITS}x{{dim//PQ_BITS}}"
 SPARQL_ENDPOINT = "https://publications.europa.eu/webapi/rdf/sparql"
 
 DOC_TYPES = [
-    "REG",
-    "DIR",
+    "REG", "DIR", "DEC", "REC", "OPIN",
+    "RES", "CONS", "INF", "INT", "CJEU",
 ]
 
-FROM_DATE = os.environ.get("FROM_DATE", "2004-01-01")
+FROM_DATE = os.environ.get("FROM_DATE", "1952-01-01")
 MAX_CHUNKS = os.environ.get("MAX_CHUNKS")
 if MAX_CHUNKS is not None:
     MAX_CHUNKS = int(MAX_CHUNKS)
-DOWNLOAD_WORKERS = 20
+DOWNLOAD_WORKERS = 10  # Publications.europa.eu CDN has no WAF, safe to parallelize
 HF_DATASET_NAME = "eurlex-chat-data"
 HF_BACKUP_DATASET = "NedAktovOps/eurlex-chat-backups"
 
@@ -171,144 +174,88 @@ WHERE {{
 
 
 def fetch_document_xhtml(doc):
-    """Fetch XHTML from Cellar CELEX endpoint.
-
-    Uses publications.europa.eu (no WAF) with proper content negotiation.
-    """
     celex = doc["celex"]
     try:
-        url = (
-            f"https://publications.europa.eu/resource/celex/"
-            f"{quote(celex, safe='')}.ENG.xhtml"
-        )
+        # Primary: publications.europa.eu CDN — no WAF, fast
+        url = f"https://publications.europa.eu/resource/celex/{quote(celex, safe='')}.ENG.xhtml"
         r = requests.get(url, timeout=15, headers={
             "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36",
             "Accept": "application/xhtml+xml",
         })
         r.raise_for_status()
+        if len(r.content) >= 500:
+            return r.text
+        logger.info(f"  Empty via CDN for {celex}, trying eurlxp fallback...")
+    except requests.RequestException:
+        logger.info(f"  CDN failed for {celex}, trying eurlxp fallback...")
 
-        if len(r.content) < 500:
-            logger.warning(f"  Empty content for {celex}")
-            return None
-
-        return r.text
-
-    except requests.RequestException as e:
-        logger.debug(f"  HTTP error for {celex}: {e}")
-        return None
+    # Fallback: eurlxp via eur-lex.eu (handles WAF internally)
+    try:
+        html = get_html_by_celex_id(celex, language="en")
+        if html and len(html) >= 500:
+            return html
+    except WAFChallengeError:
+        logger.warning(f"  WAF challenge for {celex} via eurlxp, trying SPARQL...")
     except Exception as e:
-        logger.warning(f"  Unexpected error for {celex}: {e}")
-        return None
+        logger.debug(f"  eurlxp failed for {celex}: {e}")
+
+    # Last resort: SPARQL → Cellar URL → direct fetch
+    try:
+        from eurlxp import lookup_cellar_url, get_html_by_cellar_url
+        cellar_url = lookup_cellar_url(celex)
+        if cellar_url:
+            html = get_html_by_cellar_url(cellar_url)
+            if html and len(html) >= 500:
+                return html
+    except Exception as e:
+        logger.debug(f"  SPARQL fallback also failed {celex}: {e}")
+
+    logger.warning(f"  All fetch methods failed for {celex}")
+    return None
 
 
 def parse_html_to_chunks(html, celex_id, title):
-    """Parse EUR-Lex HTML into chunks.
-
-    Strategy:
-      1. Try .eli-container → .eli-subdivision (structured articles)
-      2. Try #text or #document1 (tab content)
-      3. Try #documentView (fallback container)
-      4. Last resort: extract meaningful paragraphs
-    """
+    """Parse EUR-Lex HTML into chunks using chunkweaver."""
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(html, "html.parser")
-
+    
     if not title:
         title_el = soup.select_one(".eli-main-title .oj-doc-ti")
-        if title_el:
-            title = title_el.get_text(strip=True)
-        elif soup.title:
-            title = soup.title.string or ""
-
-    # Strategy 1: ELI subdivisions (modern documents)
+        title = (title_el.get_text(strip=True) if title_el else (soup.title.string if soup.title else ""))
+    
     container = soup.select_one(".eli-container")
     if container:
-        subdivisions = container.select(".eli-subdivision")
-        if subdivisions:
-            chunks = []
-            for sub in subdivisions:
-                sub_id = sub.get("id", "")
-                text = sub.get_text(separator=" ", strip=True)
-                if not text or len(text) < 50:
-                    continue
-
-                if sub_id.startswith("art_"):
-                    chunk_type = "article"
-                elif sub_id.startswith("enc_"):
-                    chunk_type = "enacting"
-                elif sub_id.startswith("pbl_"):
-                    chunk_type = "preamble"
-                elif sub_id.startswith("ann_"):
-                    chunk_type = "annex"
-                else:
-                    chunk_type = "section"
-
-                chunks.append({
-                    "text": text,
-                    "celex": celex_id,
-                    "title": title,
-                    "article": sub_id,
-                    "type": chunk_type,
-                })
-
-            if chunks:
-                return chunks
-
-    # Strategy 2: Tab content (corrigenda, some older docs)
-    for tab_sel in ["#text", "#document1", "#PP4Contents"]:
-        tab = soup.select_one(tab_sel)
-        if tab:
-            text = tab.get_text(separator="\n", strip=True)
-            paragraphs = extract_meaningful_paragraphs(text)
-            if paragraphs:
-                return [{"text": p, "celex": celex_id, "title": title,
-                         "article": None, "type": "paragraph"} for p in paragraphs]
-
-    # Strategy 3: Document view (any page)
-    doc_view = soup.select_one("#documentView")
-    if doc_view:
-        text = doc_view.get_text(separator="\n", strip=True)
-        paragraphs = extract_meaningful_paragraphs(text)
-        if paragraphs:
-            return [{"text": p, "celex": celex_id, "title": title,
-                     "article": None, "type": "paragraph"} for p in paragraphs]
-
-    # Strategy 4: Full page text
-    text = soup.get_text(separator="\n", strip=True)
-    paragraphs = extract_meaningful_paragraphs(text)
-    if paragraphs:
-        return [{"text": p, "celex": celex_id, "title": title,
-                 "article": None, "type": "paragraph"} for p in paragraphs]
-
-    logger.warning(f"  No content could be extracted for {celex_id}")
-    return []
-
-
-def extract_meaningful_paragraphs(text):
-    """Extract meaningful paragraphs, filtering out navigation and feature garbage."""
-    lines = [p.strip() for p in text.split("\n") if p.strip()]
-    meaningful = []
-    for line in lines:
-        line = line.strip()
-        if len(line) < 40:
-            continue
-        if any(skip in line.lower() for skip in [
-            "experimental feature", "deep linking", "visualisation of document",
-            "replacement of celex identifiers", "do you want to help improving",
-            "skip to main content", "you are here", "multilingual display",
-            "toggle dropdown", "select your language", "more about this",
-            "choose the experimental features", "official eu languages",
-            "europa eur-lex home", "help print text", "document information",
-            "up-to-date link", "permanent link", "download notice", "save to my items",
-            "create an email alert", "create an rss", "log in", "sign in", "register",
-            "my recent searches", "my eur-lex", "ecl-site-header",
-        ]):
-            continue
-        if line.startswith("http://") or line.startswith("https://") or line.startswith("<"):
-            continue
-        meaningful.append(line)
-    return meaningful
+        clean_text = container.get_text(separator=" ", strip=True)
+    else:
+        # Fallback: try to find main content
+        for sel in ["#text", "#document1", "#PP4Contents", "#documentView"]:
+            el = soup.select_one(sel)
+            if el:
+                clean_text = el.get_text(separator=" ", strip=True)
+                break
+        else:
+            clean_text = soup.get_text(separator=" ", strip=True)
+    
+    chunker = Chunker(
+        target_size=1024,
+        overlap=2,
+        overlap_unit="sentence",
+        boundaries=LEGAL_EU,
+    )
+    
+    cw_chunks = chunker.chunk_with_metadata(clean_text)
+    
+    result = []
+    for c in cw_chunks:
+        result.append({
+            "text": c.text,
+            "celex": celex_id,
+            "title": title,
+            "article": c.boundary_type if c.boundary_type else None,
+            "type": "section" if "Article" in str(c.boundary_type) else "paragraph",
+        })
+    return result
 
 
 def embed_chunks(all_chunks, batch_size=None):
@@ -593,36 +540,141 @@ def load_chunks_from_backup(token):
         shutil.rmtree(restore_dir, ignore_errors=True)
 
 
-def _download_and_chunk(docs):
-    """Download documents from SPARQL, parse XHTML, return (chunks, success_count)."""
+def _create_chunks_db(db_path):
+    """Create chunks table schema in a SQLite DB file."""
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS chunks (
+            id INTEGER PRIMARY KEY,
+            celex TEXT NOT NULL,
+            title TEXT DEFAULT '',
+            article TEXT DEFAULT NULL,
+            type TEXT DEFAULT 'section',
+            text TEXT NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_celex ON chunks(celex)")
+    conn.commit()
+    conn.close()
+    logger.info(f"Created chunks DB at {db_path}")
+
+
+def _download_and_chunk_to_db(docs, db_path):
+    """Download documents from SPARQL, parse XHTML, write to SQLite incrementally.
+    
+    Returns (success_count, total_chunks). Memory-efficient: flushes to DB after each batch.
+    """
     logger.info(f"Downloading and parsing documents ({DOWNLOAD_WORKERS} workers)...")
-    all_chunks = []
+    _create_chunks_db(db_path)
+    conn = sqlite3.connect(db_path)
     success_count = 0
+    total_chunks = 0
     with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as executor:
-        batch_size = DOWNLOAD_WORKERS * 3  # 60
+        batch_size = DOWNLOAD_WORKERS * 3
         for batch_start in range(0, len(docs), batch_size):
             batch = docs[batch_start:batch_start + batch_size]
             future_map = {
                 executor.submit(fetch_document_xhtml, doc): doc for doc in batch
             }
+            batch_chunks = []
             for future in tqdm(as_completed(future_map), total=len(future_map),
                                desc=f"Fetching {batch_start}-{batch_start + len(batch)}", leave=False):
                 doc = future_map.pop(future)
                 try:
-                    html = future.result()
+                    html = future.result(timeout=30)
                     if html:
                         chunks = parse_html_to_chunks(html, doc["celex"], "")
-                        all_chunks.extend(chunks)
+                        batch_chunks.extend(chunks)
                         success_count += 1
+                except TimeoutError:
+                    logger.warning(f"Timeout fetching {doc['celex']}, skipping")
                 except Exception as e:
                     logger.debug(f"Failed {doc['celex']}: {e}")
 
-            logger.info(f"  Batch done: {success_count}/{batch_start + len(batch)} docs, "
-                        f"{len(all_chunks)} chunks so far")
+            # Flush batch to SQLite and free memory
+            if batch_chunks:
+                rows = [
+                    (total_chunks + i, c["celex"], c.get("title", ""), c.get("article"),
+                     c.get("type", "section"), c["text"])
+                    for i, c in enumerate(batch_chunks)
+                ]
+                conn.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?)", rows)
+                conn.commit()
+                total_chunks += len(batch_chunks)
+                del batch_chunks
+            else:
+                logger.info(f"  Batch done: {success_count}/{batch_start + len(batch)} docs, "
+                            f"0 new chunks")
+                continue
 
+            logger.info(f"  Batch done: {success_count}/{batch_start + len(batch)} docs, "
+                        f"{total_chunks} chunks total ({len(rows)} new)")
+
+    conn.execute("PRAGMA optimize")
+    conn.close()
+    db_size = os.path.getsize(db_path) / 1e6
     logger.info(f"Downloaded {success_count}/{len(docs)} documents successfully")
-    logger.info(f"Total chunks: {len(all_chunks)}")
-    return all_chunks, success_count
+    logger.info(f"Total chunks: {total_chunks} (DB size: {db_size:.1f} MB)")
+    return success_count, total_chunks
+
+
+def embed_chunks_from_db(db_path, batch_size=1024, encode_batch_size=128):
+    """Embed chunks from SQLite DB in streaming fashion (low memory).
+    
+    Reads texts from DB in large batches (batch_size), but encodes them
+    in smaller sub-batches (encode_batch_size) to avoid OOM from large
+    attention matrices on CPU.
+    """
+    if _IS_EURLEX:
+        batch_size = 64
+        encode_batch_size = 16
+        logger.info(f"Loading EURLEX-BERT model: {EMBEDDING_MODEL} (768-dim)")
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(EMBEDDING_MODEL)
+        model = AutoModel.from_pretrained(EMBEDDING_MODEL)
+        model.eval()
+    else:
+        logger.info(f"Loading sentence-transformers model: {EMBEDDING_MODEL} (384-dim)")
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer(EMBEDDING_MODEL)
+
+    conn = sqlite3.connect(db_path)
+    cursor = conn.execute("SELECT COUNT(*) FROM chunks")
+    total = cursor.fetchone()[0]
+    logger.info(f"Streaming {total} chunks from DB in batches of {batch_size}...")
+    cursor.execute("SELECT text FROM chunks ORDER BY id")
+
+    all_embeddings = []
+    batch_num = 0
+    while True:
+        batch_rows = cursor.fetchmany(batch_size)
+        if not batch_rows:
+            break
+        batch_texts = [r[0] for r in batch_rows]
+        batch_num += 1
+
+        if _IS_EURLEX:
+            import torch
+            inputs = tokenizer(batch_texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
+            with torch.no_grad():
+                outputs = model(**inputs)
+            emb = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
+        else:
+            emb = model.encode(batch_texts, batch_size=encode_batch_size, show_progress_bar=False)
+
+        all_embeddings.append(emb)
+        if batch_num % 10 == 0:
+            logger.info(f"  Embedded batch {batch_num}: {len(batch_texts)} texts")
+
+    conn.close()
+    vectors = np.vstack(all_embeddings)
+    del all_embeddings
+    gc.collect()
+    logger.info(f"Embedding complete: {vectors.shape}")
+    return vectors
 
 
 def main():
@@ -635,6 +687,8 @@ def main():
                         help="Load chunks from local data/chunks.db (GitHub artifact)")
     parser.add_argument("--download-only", action="store_true",
                         help="Only download + chunk, save data/chunks.db, then exit")
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip SPARQL/download, resume from existing data/chunks.db")
     args = parser.parse_args()
 
     hf_token = os.environ.get("HF_TOKEN")
@@ -654,19 +708,36 @@ def main():
             logger.error("No documents found")
             return
         logger.info(f"Documents to process: {len(docs)}")
-        all_chunks, success_count = _download_and_chunk(docs)
-        if not all_chunks:
+        db_path = os.path.join(DATA_DIR, "chunks.db")
+        success_count, total_chunks = _download_and_chunk_to_db(docs, db_path)
+        if total_chunks == 0:
             logger.error("No chunks produced")
             return
-        build_chunks_db(all_chunks)
         logger.info("Download phase complete. data/chunks.db ready for artifact.")
         total_time = time.time() - total_start
         logger.info(f"  Duration: {total_time / 60:.1f} minutes")
         logger.info(f"  Documents: {success_count}")
-        logger.info(f"  Chunks: {len(all_chunks)}")
+        logger.info(f"  Chunks: {total_chunks}")
         return
 
-    # Mode 2: --from-artifact (load chunks from local file, for Job 2)
+    # Mode 2: --resume (skip SPARQL/download, embed from existing DB)
+    if args.resume:
+        db_path = os.path.join(DATA_DIR, "chunks.db")
+        if not os.path.exists(db_path):
+            logger.error("No data/chunks.db found. Run without --resume first.")
+            return
+        conn = sqlite3.connect(db_path)
+        total_chunks = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        success_count = conn.execute("SELECT COUNT(DISTINCT celex) FROM chunks").fetchone()[0]
+        conn.close()
+        if total_chunks == 0:
+            logger.error("data/chunks.db is empty. Run without --resume first.")
+            return
+        logger.info(f"Resuming from data/chunks.db: {success_count} docs, {total_chunks} chunks")
+        _build_from_db(db_path, success_count, hf_token, total_start)
+        return
+
+    # Mode 3: --from-artifact (load chunks from local file, for Job 2)
     if args.from_artifact:
         db_path = os.path.join(DATA_DIR, "chunks.db")
         all_chunks = _load_chunks_from_db(db_path)
@@ -683,7 +754,7 @@ def main():
         logger.error("faiss not installed. Run: pip install faiss-cpu")
         return
 
-    # Mode 3: --from-backup (load from HF backup, existing behavior)
+    # Mode 5: --from-backup (load from HF backup, existing behavior)
     if args.from_backup:
         all_chunks = load_chunks_from_backup(hf_token)
         if not all_chunks:
@@ -702,13 +773,14 @@ def main():
         return
     logger.info(f"Documents to process: {len(docs)}")
 
-    all_chunks, success_count = _download_and_chunk(docs)
+    db_path = os.path.join(DATA_DIR, "chunks.db")
+    success_count, total_chunks = _download_and_chunk_to_db(docs, db_path)
 
-    if not all_chunks:
-        logger.error("No chunks produced - check Cellar XHTML endpoint")
+    if total_chunks == 0:
+        logger.error("No chunks produced")
         return
 
-    _build_from_chunks(all_chunks, success_count, hf_token, total_start)
+    _build_from_db(db_path, success_count, hf_token, total_start)
 
 
 def _build_from_chunks(all_chunks, success_count, hf_token, total_start):
@@ -718,17 +790,52 @@ def _build_from_chunks(all_chunks, success_count, hf_token, total_start):
     logger.info(f"Embedding complete: {vectors.shape}")
 
     index_path = build_faiss_index(vectors)
-    # vectors no longer needed — free ~700MB
     del vectors
     gc.collect()
-    logger.info("Memory freed: embeddings (~700MB)")
+    logger.info("Memory freed: embeddings")
 
     db_path = build_chunks_db(all_chunks)
-    # all_chunks no longer needed — free ~456MB
     chunk_count = len(all_chunks)
     del all_chunks
     gc.collect()
-    logger.info("Memory freed: chunks (~456MB)")
+    logger.info("Memory freed: chunks")
+
+    repo_id = upload_to_hub(index_path, db_path, HF_DATASET_NAME, hf_token,
+                            success_count=success_count, chunk_count=chunk_count)
+
+    total_time = time.time() - total_start
+    logger.info("=" * 60)
+    logger.info("BUILD COMPLETE")
+    logger.info("=" * 60)
+    logger.info(f"  Git revision:  {GIT_REV}")
+    logger.info(f"  Duration:      {total_time / 60:.1f} minutes")
+    logger.info(f"  Documents:     {success_count}")
+    logger.info(f"  Chunks:        {chunk_count}")
+    logger.info(f"  Dimensions:    {dim}")
+    logger.info(f"  Dataset:       {repo_id}")
+    logger.info("  Index:         data/index.faiss")
+    logger.info("  Database:      data/chunks.db")
+    logger.info("=" * 60)
+
+
+def _build_from_db(db_path, success_count, hf_token, total_start):
+    """Build FAISS index + upload from incremental SQLite DB (low memory).
+    
+    Streams chunks from DB for embedding, reuses the existing DB for upload.
+    """
+    vectors = embed_chunks_from_db(db_path)
+    dim = vectors.shape[1]
+
+    index_path = build_faiss_index(vectors)
+    del vectors
+    gc.collect()
+    logger.info("Memory freed: embeddings")
+
+    # Verify DB has expected data (loading count, not full data)
+    conn = sqlite3.connect(db_path)
+    chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    conn.execute("PRAGMA optimize")
+    conn.close()
 
     repo_id = upload_to_hub(index_path, db_path, HF_DATASET_NAME, hf_token,
                             success_count=success_count, chunk_count=chunk_count)

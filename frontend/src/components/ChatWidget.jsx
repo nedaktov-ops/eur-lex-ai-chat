@@ -56,16 +56,36 @@ function SourceList({ sources }) {
   );
 }
 
-function FeedbackButtons({ messageId, onFeedback }) {
-  const [feedback, setFeedback] = useState(null);
-  if (feedback) return null; // Already voted
+function FeedbackButtons({ messageId, query, answer }) {
+  const [feedbackSent, setFeedbackSent] = useState(false);
+
+  const handleFeedback = async (rating) => {
+    try {
+      await fetch(`${API_URL}/feedback`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: query || "",
+          answer: answer || "",
+          rating,
+          comment: null,
+        }),
+      });
+      setFeedbackSent(true);
+    } catch (error) {
+      console.error("Failed to send feedback:", error);
+    }
+  };
+
+  if (feedbackSent) return null;
+
   return (
     <div className="mt-1 flex gap-2 items-center">
-      <button onClick={() => { setFeedback("up"); onFeedback?.(messageId, "up"); }}
+      <button onClick={() => handleFeedback(5)}
               className="text-gray-400 hover:text-green-600 text-xs transition">
         👍 Helpful
       </button>
-      <button onClick={() => { setFeedback("down"); onFeedback?.(messageId, "down"); }}
+      <button onClick={() => handleFeedback(1)}
               className="text-gray-400 hover:text-red-600 text-xs transition">
         👎 Not helpful
       </button>
@@ -84,6 +104,7 @@ export default function ChatWidget() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [selectedModel, setSelectedModel] = useState("minilm");
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -100,7 +121,7 @@ export default function ChatWidget() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/chat`, {
+      const res = await fetch(`${API_URL}/chat?model=${selectedModel}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query }),
@@ -148,7 +169,17 @@ export default function ChatWidget() {
     <div className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden max-w-2xl mx-auto">
       <div className="bg-[#003399] text-white px-4 py-3 font-semibold flex items-center justify-between">
         <span>Ask about EU Law</span>
-        <span className="text-xs font-normal opacity-75">Powered by Groq Llama 3.3</span>
+        <div className="flex items-center gap-2">
+          <select
+            value={selectedModel}
+            onChange={(e) => setSelectedModel(e.target.value)}
+            className="text-xs bg-[#003399] border border-blue-400 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300"
+          >
+            <option value="minilm">MiniLM</option>
+            <option value="eurlex-bert">EURLEX-BERT</option>
+          </select>
+          <span className="text-xs font-normal opacity-75">Powered by Groq Llama 3.3</span>
+        </div>
       </div>
       <div className="h-96 overflow-y-auto p-4 space-y-3 bg-gray-50">
         {messages.map((msg, i) => (
@@ -171,12 +202,13 @@ export default function ChatWidget() {
               {msg.sources && msg.sources.length > 0 && (
                 <SourceList sources={msg.sources} />
               )}
-              {msg.role === "assistant" && i > 0 && (
-                <FeedbackButtons
-                  messageId={i}
-                  onFeedback={(id, dir) => console.log("Feedback:", id, dir)}
-                />
-              )}
+               {msg.role === "assistant" && i > 0 && (
+                 <FeedbackButtons
+                   messageId={i}
+                   query={messages[i-1]?.content || ""}
+                   answer={msg.content}
+                 />
+               )}
             </div>
           </div>
         ))}

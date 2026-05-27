@@ -1,0 +1,32 @@
+[
+  {
+    "question": "What are the employer's obligations regarding pay transparency under the Pay Transparency Directive?",
+    "answer": "",
+    "contexts": [],
+    "ground_truth": "Under the Pay Transparency Directive (CELEX 32023L0970), employers must provide salary information to prospective employees before the interview, and employees can request information on pay levels. Member States must ensure that employers provide this information in a clear and transparent manner."
+  },
+  {
+    "question": "What is the definition of high-risk AI systems under the AI Act?",
+    "answer": "",
+    "contexts": [],
+    "ground_truth": "High-risk AI systems are those that pose significant risks to health, safety, or fundamental rights. They include AI used in critical infrastructure, education, employment, law enforcement, and other areas listed in Annex III of the AI Act (CELEX 32024R0109). Such systems must undergo conformity assessments and meet strict requirements."
+  },
+  {
+    "question": "What are the requirements for data controllers under GDPR?",
+    "answer": "",
+    "contexts": [],
+    "ground_truth": "Under the GDPR (CELEX 32016R0679), data controllers must implement appropriate technical and organizational measures to ensure data security, respect data subject rights, conduct data protection impact assessments for high-risk processing, and appoint a Data Protection Officer when required."
+  },
+  {
+    "question": "What is the principle of purpose limitation in EU data protection law?",
+    "answer": "",
+    "contexts": [],
+    "ground_truth": "Purpose limitation means personal data must be collected for specified, explicit, and legitimate purposes and not further processed in a manner incompatible with those purposes. This is enshrined in Article 5(1)(b) of GDPR (CELEX 32016R0679)."
+  },
+  {
+    "question": "What penalties can be imposed for non-compliance with the AI Act?",
+    "answer": "",
+    "contexts": [],
+    "ground_truth": "The AI Act (CELEX 32024R0109) provides for administrative fines up to 35 million EUR or 7% of total worldwide annual turnover, whichever is higher, for prohibited AI practices. For other violations, fines can go up to 15 million EUR or 3% of turnover."
+  }
+]

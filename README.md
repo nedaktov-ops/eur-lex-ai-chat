@@ -12,7 +12,9 @@ app_port: 7860
 
 > An intelligent legal reasoning assistant for EU law — powered by RAG, discourse-aware search, and answer validation.
 
-Ask questions about EU directives, regulations, and legislation in plain English. The system understands legal intent, expands queries with legal synonyms, performs discourse-aware search across 305K+ chunks of EUR-Lex documents, generates answers with CELEX citations, validates answer quality, and provides confidence estimates.
+Ask questions about EU directives, regulations, and legislation in plain English. The system understands legal intent, expands queries with legal synonyms, performs hybrid search (BM25 + FAISS with RRF fusion) across 2.2M+ chunks of EUR-Lex documents (10 doc types from 1952), reranks results with a cross-encoder, generates answers with CELEX citations, validates answer quality, and provides confidence estimates.
+
+**Current coverage:** 99.0% (170,724 of 172,488 eligible EU documents — 10 types, from 1952)
 
 **Live demo:** [frontend-ruddy-zeta-40.vercel.app](https://frontend-ruddy-zeta-40.vercel.app)  
 **API backend:** [nedaktovops-eurlex-chat-api.hf.space](https://nedaktovops-eurlex-chat-api.hf.space)
@@ -107,8 +109,15 @@ User Query
 
 ## Features
 
+### Core Technologies
+- **Hybrid Search** — Combines BM25 (sparse) and FAISS (dense) retrieval using Reciprocal Rank Fusion (RRF) for improved recall
+- **Cross-Encoder Reranking** — Re-ranks top candidates with `cross-encoder/ms-marco-MiniLM-L-6-v2` for precision
+- **Structure-Aware Chunking** — Uses `chunkweaver` with `LEGAL_EU` preset to split documents at legal boundaries (articles, chapters, recitals)
+- **Dual Embedding Support** — MiniLM (384-dim) or EURLEX-BERT (768-dim) via `INDEX_SUFFIX` env var
+- **RAGAS Evaluation** — Continuous quality assessment with faithfulness and context recall metrics
+
 ### Phase 0 — Foundation & Safety
-- Structured JSON pipeline logging (7 stages)
+- Structured JSON pipeline logging (9 stages)
 - HuggingFace Hub index backup/restore
 - Checkpoint save/restore for rollback safety
 - Automated GitHub backup workflow (every 6 hours)
@@ -143,11 +152,14 @@ User Query
 | Component | Technology |
 |-----------|------------|
 | **Backend** | Python 3.12, FastAPI |
-| **Vector Search** | FAISS IVFPQ (305K vectors, 384-dim) |
-| **Chunk Storage** | SQLite (~35MB, on-disk) |
+| **Vector Search** | FAISS IVFPQ (305K vectors, 384-dim) + BM25 (rank-bm25) |
+| **Chunk Storage** | SQLite (~377MB, on-disk) |
 | **Embeddings** | all-MiniLM-L6-v2 (384-dim) or nlpaueb/bert-base-uncased-eurlex (768-dim) |
+| **Chunking** | chunkweaver (LEGAL_EU preset) |
+| **Reranking** | Cross-encoder (ms-marco-MiniLM-L-6-v2) |
 | **LLM** | Groq API — llama-3.3-70b-versatile |
 | **NLP** | sentence-transformers, spaCy, transformers |
+| **Evaluation** | RAGAS (faithfulness, context_recall) |
 | **Logging** | Structured JSON (stdout) |
 | **Frontend** | Astro + React (Tailwind CSS) |
 | **Hosting** | HuggingFace Spaces (backend), Vercel (frontend) |
@@ -194,6 +206,38 @@ curl -X POST http://localhost:8000/chat \
 
 ```bash
 python3 -m pytest tests/ -v
+```
+
+### Rebuild Index
+
+```bash
+# Full rebuild (fetch all documents, chunk, embed, upload)
+bash scripts/run_build.sh
+
+# Or with explicit environment
+HF_TOKEN=your_token python3 scripts/build_index.py
+```
+
+### Run Evaluation
+
+```bash
+# RAGAS quality evaluation with thresholds
+bash scripts/evaluate.py
+
+# Or via Python directly
+python3 scripts/evaluate.py
+```
+
+### Model Selection
+
+Use `INDEX_SUFFIX` to switch embedding models:
+
+```bash
+# Default: MiniLM (384-dim)
+export INDEX_SUFFIX=""
+
+# EURLEX-BERT (768-dim, better legal understanding)
+export INDEX_SUFFIX="_eurlex"
 ```
 
 ## API Reference

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from .logging_middleware import (
     PipelineLoggingMiddleware,
@@ -16,6 +17,8 @@ from .logging_middleware import (
     log_response_returned,
     log_search_performed,
 )
+from .search import get_bm25_results, search as faiss_search, rrf_fuse
+from .reranker import Reranker
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,24 +26,41 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-_embedding_model = None
+_embedding_models = {}
+
+
+class FeedbackRequest(BaseModel):
+    """Model for user feedback on answers."""
+    pass
 
 
 def get_embedding_model(index_suffix=""):
-    global _embedding_model
-    if _embedding_model is not None:
-        return _embedding_model
+    """Get embedding model for a given suffix (cached)."""
+    global _embedding_models
+    if index_suffix in _embedding_models:
+        return _embedding_models[index_suffix]
 
-    suffix = index_suffix or os.environ.get("INDEX_SUFFIX", "")
-    if "eurlex" in suffix.lower():
+    # Determine which model to load based on suffix
+    if "eurlex" in index_suffix.lower():
         from .data_loader import EURLEXEmbedder
         logger.info("Loading EURLEX-BERT embedding model (768-dim)")
-        _embedding_model = EURLEXEmbedder()
+        model = EURLEXEmbedder()
     else:
         from sentence_transformers import SentenceTransformer
         logger.info("Loading embedding model: all-MiniLM-L6-v2 (384-dim)")
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-    return _embedding_model
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+    _embedding_models[index_suffix] = model
+    return model
+
+
+_reranker = None
+
+def get_reranker():
+    """Get the global reranker instance, initializing if needed."""
+    global _reranker
+    if _reranker is None:
+        _reranker = Reranker()
+    return _reranker
 
 
 @asynccontextmanager
@@ -94,6 +114,10 @@ async def health():
         "loaded_at": stats["loaded_at"],
     }
 
+@app.get("/models")
+async def list_models():
+    return {"models": ["minilm", "eurlex-bert"]}
+
 @app.get("/refresh")
 async def refresh():
     from .data_loader import check_for_updates, reload_index
@@ -139,6 +163,22 @@ async def backup():
         )
 
 
+@app.post("/feedback")
+async def feedback(fb: FeedbackRequest):
+    import json
+    import os
+
+    # Ensure logs directory exists
+    os.makedirs("logs", exist_ok=True)
+    log_path = "logs/feedback.jsonl"
+
+    # Append feedback to JSONL file
+    with open(log_path, "a") as f:
+        f.write(json.dumps(fb.dict()) + "\n")
+
+    return {"status": "ok"}
+
+
 @app.post("/chat")
 async def chat(request: Request):
     import json
@@ -150,7 +190,6 @@ async def chat(request: Request):
     from .question_classifier import EUQuestionClassifier
     from .rag import answer_question
     from .rate_limit import is_rate_limited
-    from .search import search_discourse_aware
 
     client_ip = request.client.host if request.client else "unknown"
 
@@ -171,6 +210,15 @@ async def chat(request: Request):
         raise HTTPException(status_code=400, detail="Query is required")
     if len(query) > 2000:
         raise HTTPException(status_code=400, detail="Query too long (max 2000 chars)")
+
+    # Get model selection from query parameter
+    model_name = request.query_params.get("model", "minilm")
+    if model_name not in ["minilm", "eurlex-bert"]:
+        raise HTTPException(status_code=400, detail="Invalid model. Choose 'minilm' or 'eurlex-bert'.")
+
+    # Determine index suffix for this model
+    model_to_suffix = {"minilm": "", "eurlex-bert": "eurlex"}
+    suffix = model_to_suffix[model_name]
 
     # === Stage 1: Query Received ===
     request_id = getattr(request.state, "request_id", None)
@@ -209,29 +257,33 @@ async def chat(request: Request):
             expanded_queries=query_variations[1:],
         )
 
-        # === Stage 4: Aggregated Search ===
-        model = get_embedding_model()
+        # === Stage 4: Hybrid Search with RRF & Cross-Encoder Reranking ===
+        embedder = get_embedding_model(index_suffix=suffix)
         search_start = time.time()
 
-        all_chunks = []
-        seen_ids = set()
+        # Collect BM25 and FAISS results for all query variations
+        bm25_lists = []
+        faiss_lists = []
         for q_variant in query_variations:
-            query_vector = model.encode([q_variant], normalize_embeddings=True)
-            chunks = search_discourse_aware(query_vector, top_k=10, query_context=classification)
-            for chunk in chunks:
-                chunk_id = f"{chunk.get('celex', '')}-{chunk.get('article', '')}"
-                if chunk_id not in seen_ids:
-                    seen_ids.add(chunk_id)
-                    all_chunks.append(chunk)
+            q_vec = embedder.encode([q_variant], normalize_embeddings=True)
+            bm25_res = get_bm25_results(q_variant, top_k=20, model_name=model_name)
+            bm25_lists.append(bm25_res)
+            faiss_res = faiss_search(q_vec, top_k=20, model_name=model_name)
+            faiss_lists.append(faiss_res)
+
+        # Reciprocal Rank Fusion across all retrievers
+        all_retrievals = bm25_lists + faiss_lists
+        rrf_candidates = rrf_fuse(all_retrievals, k=60, top_n=20)
+
+        # Cross-encoder reranking using the original query
+        reranker = get_reranker()
+        chunks = reranker.rerank(query, rrf_candidates, top_k=10)
 
         search_duration_ms = (time.time() - search_start) * 1000
 
-        # Re-rank by adjusted_score (discourse-aware) or fallback to raw score
-        all_chunks.sort(key=lambda c: c.get("adjusted_score", c.get("score", 0)), reverse=True)
-        chunks = all_chunks[:10]
-
-        top_scores = [c.get("score", 0) for c in chunks[:3]] if chunks else []
-        query_vector_shape = (1, query_vector.shape[-1]) if hasattr(query_vector, "shape") else (1, 0)
+        # Log search results (using rerank_score)
+        top_scores = [c.get("rerank_score", 0) for c in chunks[:3]] if chunks else []
+        query_vector_shape = (1, q_vec.shape[-1]) if hasattr(q_vec, "shape") else (1, 0)
         log_search_performed(
             request_id, query_vector_shape, len(chunks), top_scores, search_duration_ms,
         )

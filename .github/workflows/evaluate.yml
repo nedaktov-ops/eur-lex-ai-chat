@@ -1,0 +1,43 @@
+name: Evaluate RAG Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt
+          pip install -r requirements-dev.txt
+          pip install ragas
+      
+      - name: Set up API keys
+        run: |
+          echo "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}" >> $GITHUB_ENV
+          echo "HF_TOKEN=${{ secrets.HF_TOKEN }}" >> $GITHUB_ENV
+      
+      - name: Run evaluation
+        id: eval
+        run: |
+          python scripts/evaluate.py
+        env:
+          GROQ_API_KEY: ${{ env.GROQ_API_KEY }}
+        continue-on-error: false
+      
+      - name: Post results
+        if: always()
+        run: |
+          echo "Evaluation completed. Check logs above for metrics."
